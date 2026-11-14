@@ -45,9 +45,10 @@ GD_CONFIG = os.path.expanduser("~/.config/gallery-dl/config.json")
 STORY_RE = re.compile(r"/stories/([A-Za-z0-9_.]+)/(\d+)")
 
 # ---------- 版本检查提示（只提示不下载；24h 最多查一次；失败静默） ----------
-VERSION = "2.1.0"
-UPDATE_CHECK_URL = ("https://gh-proxy.com/https://raw.githubusercontent.com/"
-                    "vin7sen-droid/obsidian-img/main/tools/ins_dl.json")
+VERSION = "2.1.1"
+UPDATE_CHECK_URL = ("https://api.github.com/repos/vin7sen-droid/obsidian-img/"
+                    "contents/tools/ins_dl.json?ref=main")  # 直查 API，gh-proxy 有 CDN 缓存会滞后
+GH_TOKEN_FILE = "/root/.config/ghclip/token"  # 可选：有则 5000 次/小时
 CACHE_DIR = os.path.expanduser("~/.cache/ins_dl")
 CHECK_INTERVAL = 86400
 
@@ -68,7 +69,12 @@ def check_update():
     if time.time() - cache.get("checked_at", 0) < CHECK_INTERVAL:
         return
     try:
-        req = urllib.request.Request(UPDATE_CHECK_URL, headers={"User-Agent": UA})
+        hdrs = {"User-Agent": UA, "Accept": "application/vnd.github.raw"}
+        try:  # 有 token 用 token（5000/h），没有走匿名（60/h 够每日一查）
+            hdrs["Authorization"] = "Bearer " + open(GH_TOKEN_FILE).read().strip()
+        except Exception:
+            pass
+        req = urllib.request.Request(UPDATE_CHECK_URL, headers=hdrs)
         with urllib.request.urlopen(req, timeout=3) as r:
             info = json.loads(r.read().decode("utf-8", "replace"))
             if not isinstance(info, dict):
@@ -78,9 +84,11 @@ def check_update():
     cache["checked_at"] = time.time()  # 只在请求成功后写，网络抖动不锁死
     latest = str(info.get("version") or "")
     if latest and _ver_tuple(latest) > _ver_tuple(VERSION):
-        print("! 有新版本 v%s（当前 v%s）— %s" % (latest, VERSION, info.get("note") or ""))
-        if info.get("url"):
-            print("  取新版: %s" % info["url"])
+        if cache.get("prompted") != latest:  # 同一版本只提醒一次
+            print("! 有新版本 v%s（当前 v%s）— %s" % (latest, VERSION, info.get("note") or ""))
+            if info.get("url"):
+                print("  取新版: %s" % info["url"])
+            cache["prompted"] = latest
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as fh:
