@@ -153,6 +153,16 @@ def status():
 
 
 def push():
+    # 上传前语法预检：坏版本不进 manifest，另一台就不会被坏 sha 卡死更新
+    for f in FILES:
+        if f.endswith(".py"):
+            try:
+                subprocess.run([sys.executable, "-c",
+                                "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)",
+                                os.path.join(LOCAL, f)], check=True, capture_output=True, timeout=30)
+            except Exception as e:
+                sys.exit("push 中止：%s 语法不过（%s）——先修好再推，避免污染远端"
+                         % (f, (e.stderr or b"").decode("utf-8", "replace").strip()[:200]))
     local = _local_manifest()
     remote, mani_sha = _get_manifest()
     files = remote.get("files", {})
@@ -267,6 +277,9 @@ def rollback(ts=None):
         shutil.copy2(sfile, os.path.join(LOCAL, f))
         log("  ✓ %s" % f)
     log("完成。如需回到更早版本：python3 gh_sync.py rollback <时间戳>")
+    if os.path.exists(MASTER_MARK):
+        log("本机是权威源：自动把回滚版推上远端（另一台下次 pull 即回滚一致）")
+        return push()   # 远端不同步回滚的话，跟随端会继续拉到坏版本
     return 0
 
 
