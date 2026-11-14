@@ -12,7 +12,7 @@
 """
 import urllib.request, urllib.parse, json, re, os, sys, time, base64
 
-VERSION = '2.0.0'
+VERSION = '2.0.1'
 REPO = 'vin7sen-droid/obsidian-img'
 RAW = 'https://gh-proxy.com/https://raw.githubusercontent.com/' + REPO + '/main/'
 UPDATE_CHECK_URL = RAW + 'tools/douyin_dl.json'   # {"version","note","url"}
@@ -254,10 +254,12 @@ def check_update():
     cache['checked_at'] = time.time()
     latest = str(info.get('version') or '')
     if latest and _ver_tuple(latest) > _ver_tuple(VERSION):
-        print('! 有新版本 v%s（当前 v%s）— %s'
-              % (latest, VERSION, info.get('note') or ''))
-        if info.get('url'):
-            print('  取新版: %s' % info['url'])
+        if cache.get('prompted') != latest:      # 同一版本只提醒一次，避免天天打扰
+            print('! 有新版本 v%s（当前 v%s）— %s'
+                  % (latest, VERSION, info.get('note') or ''))
+            if info.get('url'):
+                print('  取新版: %s' % info['url'])
+            cache['prompted'] = latest
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         with open(cache_path, 'w', encoding='utf-8') as f:
