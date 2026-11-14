@@ -1,0 +1,5 @@
+{
+ "version": "2.0.0",
+ "note": "微博图集 / Live Photo 下载器 v2：并发下载、重试退避、完整性校验、多条微博清单",
+ "url": "https://gh-proxy.com/https://raw.githubusercontent.com/vin7sen-droid/obsidian-img/main/tools/weibo_dl.py"
+}
