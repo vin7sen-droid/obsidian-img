@@ -32,7 +32,7 @@ ROUTES = [
 TIMEOUT = 900  # 秒；大视频下载慢
 
 # ---------- 版本检查提示（只提示不下载；24h 最多查一次；失败静默） ----------
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 UPDATE_CHECK_URL = ("https://gh-proxy.com/https://raw.githubusercontent.com/"
                     "vin7sen-droid/obsidian-img/main/tools/social_dl.json")
 CACHE_DIR = os.path.expanduser("~/.cache/social_dl")
@@ -65,9 +65,11 @@ def check_update():
     cache["checked_at"] = time.time()  # 只在请求成功后写，网络抖动不锁死
     latest = str(info.get("version") or "")
     if latest and _ver_tuple(latest) > _ver_tuple(VERSION):
-        print("! 有新版本 v%s（当前 v%s）— %s" % (latest, VERSION, info.get("note") or ""))
-        if info.get("url"):
-            print("  取新版: %s" % info["url"])
+        if cache.get("prompted") != latest:      # 同一版本只提醒一次，避免天天打扰
+            print("! 有新版本 v%s（当前 v%s）— %s" % (latest, VERSION, info.get("note") or ""))
+            if info.get("url"):
+                print("  取新版: %s" % info["url"])
+            cache["prompted"] = latest
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as fh:
