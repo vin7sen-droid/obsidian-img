@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-14T09:36:03+08:00",
+ "updated": "2026-11-14T09:43:31+08:00",
  "files": {
   "clip.py": {
    "sha256": "f30167596b691fdb0beeebdd3dca9dc72580570fa0b48f1563d8a5522a769e30",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "406d36ada0bc7cd2008a5359111efa715ee14b9f8b74811b34b640ec79d5f070",
-   "bytes": 14835
+   "sha256": "30d98b017eefcfbff86aad4453a312287f5f9df34b07e3f215d49fa00d302bea",
+   "bytes": 14915
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -40,6 +40,18 @@
   "douyin_dl.py": {
    "sha256": "c016e2c3f8e08cb538df2614163d22a6c723e15af1726f120fe19f84f1b4def6",
    "bytes": 15088
+  },
+  "social_dl.py": {
+   "sha256": "365fbd508fd725c666d27d3d88c8fdc53c31b26cede4c545c36202aaff7c5ace",
+   "bytes": 5733
+  },
+  "ins_export/ins_dl.py": {
+   "sha256": "3828dbbcbf33f8a9b8fb8d66484ba891be2f7571d43345fbafcd730f933cd7ab",
+   "bytes": 14766
+  },
+  "ins_export/selfupdate.py": {
+   "sha256": "1e7956ef45fb21f02ecb24fe8f0eda20217d088ef57b75b11ba60b77359f48bd",
+   "bytes": 3013
   }
  }
 }
