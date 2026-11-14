@@ -15,6 +15,7 @@ import base64, fcntl, hashlib, json, os, shutil, subprocess, sys, time
 import urllib.error, urllib.request
 
 REPO = "vin7sen-droid/obsidian-img"
+MASTER_MARK = "/root/workspace/.sync-master"   # 本机权威源标志：存在→auto=push，不存在→auto=pull
 BRANCH = "main"
 DIR = "tools"
 LOCAL = os.path.dirname(os.path.abspath(__file__))
@@ -191,15 +192,20 @@ def main():
         log("sync：另一实例运行中，跳过")
         return 0
     try:
-        cmd = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "sync"
+        cmd = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "auto"
+        if cmd == "auto":
+            # 本机（权威源，有 .sync-master 标志）只推；跟随端只拉——同顺序双向会互相覆盖
+            cmd = "push" if os.path.exists(MASTER_MARK) else "pull"
+            log("auto 角色：%s" % cmd)
         if cmd == "push":
             return push()
         if cmd == "pull":
             return pull()
-        rc = push()
-        if rc == 0:
-            rc = pull()   # push 后重看 manifest（可能被另一台机器推过）
-        return rc
+        if cmd == "sync":            # 手工双向：先拉后推
+            rc = pull()
+            return rc if rc else push()
+        log("未知命令：%s（可用 push/pull/sync/auto）" % cmd)
+        return 2
     finally:
         fcntl.flock(fh, fcntl.LOCK_UN)
 
