@@ -135,12 +135,10 @@ def status():
             missing.append(f)
         elif l == r:
             same.append(f)
+        elif is_master:
+            ahead.append(f)   # 权威源视角：本地≠manifest → 本地领先，推可更新远端
         else:
-            ahead.append(f)   # 本地内容 ≠ manifest 记录 → 视为本地领先（对权威源）
-            if is_master:
-                pass
-            else:
-                behind.append(f)
+            behind.append(f)  # 跟随端视角：远端不同，拉可更新本地（两列表互斥，勿双计）
     for f in sorted(same):
         log("  ✓ %-28s 一致" % f)
     for f in ahead:
@@ -150,7 +148,7 @@ def status():
     for f in missing:
         log("  ✗ %-28s 本地缺失（拉可补齐）" % f)
     log("汇总：一致 %d / 本地不同 %d / 远端不同 %d / 本地缺失 %d"
-        % (len(same), len(ahead) - len([f for f in ahead if f in behind]) if False else len(ahead), len(behind), len(missing)))
+        % (len(same), len(ahead), len(behind), len(missing)))
     return 0
 
 
