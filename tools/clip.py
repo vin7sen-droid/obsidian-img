@@ -716,7 +716,8 @@ def _ctxt(c):
 
 
 def _when(c):
-    return c["postTime"][5:16].replace("T", " ")
+    t = c.get("postTime") or ""
+    return t[5:16].replace("T", " ") if len(t) >= 16 else ""
 
 
 def _city(c):
@@ -726,6 +727,9 @@ def _city(c):
 def _floor(c):
     m = re.search(r"(\d+)", c.get("floorStr") or "")
     return int(m.group(1)) if m else 0
+
+
+INDENT = "\u3000\u3000"  # 楼中楼缩进（两个全角空格，markdown 安全）
 
 
 def _entry(c, prefix="", zoom=False):
@@ -745,7 +749,10 @@ def _entry(c, prefix="", zoom=False):
         kn = (k.get("userInfo") or {}).get("userNick") or "匿名"
         ru = (k.get("replyUserInfo") or {}).get("userNick")
         who = "↳ " + kn + (" 回复 " + ru if ru else "")
-        out += ["**%s** · %s · 赞 %s" % (who, _when(k), k.get("support", 0)), "", _ctxt(k) or "（图片评论）", ""]
+        kb = _ctxt(k) or "（图片评论）"
+        kb = "\n".join(INDENT + ln for ln in kb.split("\n"))
+        out += [INDENT + "**%s** · %s · 赞 %s" % (who, _when(k), k.get("support", 0)), "",
+                kb, ""]
     return "\n".join(out).rstrip()
 
 
@@ -796,7 +803,9 @@ _ZOOM_OPEN = '<span style="font-size:1.12em">'
 
 def _is_item_start(ln):
     """条目头：普通评论以 ** 开头；置顶热评整行被 span 包裹"""
-    return ln.startswith("**") or ln.startswith(_ZOOM_OPEN + "**")
+    return (ln.startswith("**")
+            or ln.startswith(INDENT + "**")
+            or ln.startswith(_ZOOM_OPEN + "**"))
 
 
 def _split_items(text):
@@ -804,12 +813,12 @@ def _split_items(text):
     for ln in text.split("\n"):
         if _is_item_start(ln):
             if cur:
-                items.append("\n".join(cur).strip())
+                items.append("\n".join(cur).strip("\n"))
             cur = [ln]
         elif cur:
             cur.append(ln)
     if cur:
-        items.append("\n".join(cur).strip())
+        items.append("\n".join(cur).strip("\n"))
     return [x for x in items if x]
 
 
