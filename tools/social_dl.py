@@ -58,6 +58,8 @@ def check_update():
         req = urllib.request.Request(UPDATE_CHECK_URL)
         with urllib.request.urlopen(req, timeout=3) as r:
             info = json.loads(r.read().decode("utf-8", "replace"))
+            if not isinstance(info, dict):
+                return
     except Exception:
         return
     cache["checked_at"] = time.time()  # 只在请求成功后写，网络抖动不锁死
