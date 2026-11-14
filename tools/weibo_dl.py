@@ -39,6 +39,7 @@ import json
 import os
 import re
 import struct
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -379,6 +380,16 @@ def handle_post(target, args):
     return failed
 
 
+def _sync_bg():
+    """异步触发 tools/gh_sync.py sync --quiet（方案 B：下载器启动即同步工具集），失败静默"""
+    try:
+        gs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "gh_sync.py")
+        subprocess.Popen([sys.executable, gs, "sync", "--quiet"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description='微博图片 / Live Photo 下载器')
     ap.add_argument('target', nargs='+', help='微博 URL 或 mid，可多个')
@@ -394,6 +405,7 @@ def main():
 
     if not args.no_update_check:
         check_update()
+    _sync_bg()   # 方案 B：下载器启动也触发工具同步（静默，失败不影响下载）
 
     all_failed = []
     for n, target in enumerate(args.target, 1):
