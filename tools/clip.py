@@ -907,6 +907,10 @@ def build(doc, url, tags_line, summary, body, cmts, auto=False):
     if summary:
         parts += ["摘要：" + summary, ""]
     parts += [body]
+    if auto:
+        # 标记必须在评论区之前（正文末尾、--- 分隔线之前）——否则 refresh/merge
+        # 按 "## 评论区" 切 head 时会把它切进评论区段，被挪到条目中间甚至丢掉
+        parts += ["", "<!-- 待精修 -->", ""]
 
     if cmts and not (cmts["main"] or cmts["extra"]) and cmts.get("endHint"):
         n = _news_comment_count(cmts.get("newsid"))
@@ -917,8 +921,6 @@ def build(doc, url, tags_line, summary, body, cmts, auto=False):
             parts = parts + ["", "---", "", "评论区：" + note + "。", ""]
     elif cmts and (cmts["main"] or cmts["extra"]):
         parts += ["", "---", "", comments_section(cmts)]
-    if auto:
-        parts += ["", "<!-- 待精修 -->", ""]
     return name, "\n".join(parts).rstrip() + "\n"
 
 
