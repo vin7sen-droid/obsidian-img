@@ -12,10 +12,10 @@
 """
 import urllib.request, urllib.parse, json, re, os, sys, time, base64
 
-VERSION = '2.0.1'
+VERSION = '2.0.2'
 REPO = 'vin7sen-droid/obsidian-img'
-RAW = 'https://gh-proxy.com/https://raw.githubusercontent.com/' + REPO + '/main/'
-UPDATE_CHECK_URL = RAW + 'tools/douyin_dl.json'   # {"version","note","url"}
+UPDATE_CHECK_URL = ('https://api.github.com/repos/' + REPO +
+                    '/contents/tools/douyin_dl.json?ref=main')   # 直查 API：gh-proxy 有 CDN 缓存
 CACHE_DIR = os.path.expanduser('~/.cache/douyin_dl')
 CHECK_INTERVAL = 86400  # 24h 内最多查一次
 
@@ -247,7 +247,12 @@ def check_update():
     if time.time() - cache.get('checked_at', 0) < CHECK_INTERVAL:
         return
     try:
-        raw = http_get(UPDATE_CHECK_URL, {'User-Agent': UA}, timeout=3, tries=1)
+        hdrs = {'User-Agent': UA, 'Accept': 'application/vnd.github.raw'}
+        try:                                   # 有 token 用 token（5000/h），没有走匿名（60/h 够每日一查）
+            hdrs['Authorization'] = 'Bearer ' + open('/root/.config/ghclip/token').read().strip()
+        except Exception:
+            pass
+        raw = http_get(UPDATE_CHECK_URL, hdrs, timeout=3, tries=1)
         info = json.loads(raw.decode('utf-8', 'replace'))
     except Exception:
         return
