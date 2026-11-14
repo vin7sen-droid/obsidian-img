@@ -112,6 +112,48 @@ def _get_manifest():
         return {}, r.get("sha")
 
 
+
+def status():
+    """只读体检：角色、远端 manifest、每个文件 本地/远端 sha 是否一致。不动任何文件。"""
+    is_master = os.path.exists(MASTER_MARK)
+    role = "权威源（只推不拉）" if is_master else "跟随端（只拉不推）"
+    log("角色：%s   标志：%s" % (role, MASTER_MARK if is_master else "（无）"))
+    remote, mani_sha = _get_manifest()
+    files = remote.get("files", {})
+    if not files:
+        log("远端 manifest：无（从未 push 过）")
+        return 0
+    log("远端 manifest：updated=%s" % remote.get("updated", "?"))
+    local = _local_manifest()
+    ahead, behind, same, missing = [], [], [], []
+    for f in sorted(set(local) | set(files)):
+        l = local.get(f, {}).get("sha256")
+        r = files.get(f, {}).get("sha256")
+        if l and not r:
+            ahead.append(f)
+        elif r and not l:
+            missing.append(f)
+        elif l == r:
+            same.append(f)
+        else:
+            ahead.append(f)   # 本地内容 ≠ manifest 记录 → 视为本地领先（对权威源）
+            if is_master:
+                pass
+            else:
+                behind.append(f)
+    for f in sorted(same):
+        log("  ✓ %-28s 一致" % f)
+    for f in ahead:
+        log("  ▲ %-28s 本地不同（推可更新远端）" % f)
+    for f in behind:
+        log("  ▼ %-28s 远端不同（拉可更新本地）" % f)
+    for f in missing:
+        log("  ✗ %-28s 本地缺失（拉可补齐）" % f)
+    log("汇总：一致 %d / 本地不同 %d / 远端不同 %d / 本地缺失 %d"
+        % (len(same), len(ahead) - len([f for f in ahead if f in behind]) if False else len(ahead), len(behind), len(missing)))
+    return 0
+
+
 def push():
     local = _local_manifest()
     remote, mani_sha = _get_manifest()
@@ -196,6 +238,40 @@ def pull():
     return 0
 
 
+
+def rollback(ts=None):
+    """把 bak/sync/<时间戳>/ 的旧版拷回 LOCAL。缺省用最近一次；带 ts 用指定那次。"""
+    if not os.path.isdir(BAK_SYNC):
+        sys.exit("无备份目录 %s" % BAK_SYNC)
+    stamps = sorted((d for d in os.listdir(BAK_SYNC)
+                     if os.path.isdir(os.path.join(BAK_SYNC, d))), reverse=True)
+    if not stamps:
+        sys.exit("备份目录为空")
+    if ts is None:
+        ts = stamps[0]
+    elif ts not in stamps:
+        sys.exit("没有 %s 这个备份。可用：%s" % (ts, ", ".join(stamps[:5])))
+    src = os.path.join(BAK_SYNC, ts)
+    names = sorted(os.listdir(src))
+    if not names:
+        sys.exit("该次备份为空")
+    log("回滚 %s（%d 个文件）：" % (ts, len(names)))
+    for f in names:
+        sfile = os.path.join(src, f)
+        if f.endswith(".py"):
+            try:
+                subprocess.run([sys.executable, "-c",
+                                "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)",
+                                sfile], check=True, capture_output=True, timeout=30)
+            except Exception as e:
+                log("  ✗ %s（备份文件本身编译不过，跳过）" % f)
+                continue
+        shutil.copy2(sfile, os.path.join(LOCAL, f))
+        log("  ✓ %s" % f)
+    log("完成。如需回到更早版本：python3 gh_sync.py rollback <时间戳>")
+    return 0
+
+
 def main():
     lock = os.path.expanduser("~/.cache/ghsync.lock")
     os.makedirs(os.path.dirname(lock), exist_ok=True)
@@ -216,6 +292,10 @@ def main():
             # 灾难恢复确需拉取时：mv 标志文件移开 → 手工 pull → mv 回来。
             sys.exit("拒绝 pull：本机是权威源（%s 存在），只推不拉；"
                      "确需强制拉取请先移走标志文件。" % MASTER_MARK)
+        if cmd == "status":
+            return status()
+        if cmd == "rollback":
+            return rollback(sys.argv[2] if len(sys.argv) > 2 else None)
         if cmd == "push":
             return push()
         if cmd == "pull":
@@ -223,7 +303,7 @@ def main():
         if cmd == "sync":            # 手工双向：先拉后推
             rc = pull()
             return rc if rc else push()
-        log("未知命令：%s（可用 push/pull/sync/auto）" % cmd)
+        log("未知命令：%s（可用 push/pull/sync/auto/status/rollback [时间戳]）" % cmd)
         return 2
     finally:
         fcntl.flock(fh, fcntl.LOCK_UN)
