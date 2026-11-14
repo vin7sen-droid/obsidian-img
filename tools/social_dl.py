@@ -32,9 +32,9 @@ ROUTES = [
 TIMEOUT = 900  # 秒；大视频下载慢
 
 # ---------- 版本检查提示（只提示不下载；24h 最多查一次；失败静默） ----------
-VERSION = "1.1.1"
-UPDATE_CHECK_URL = ("https://gh-proxy.com/https://raw.githubusercontent.com/"
-                    "vin7sen-droid/obsidian-img/main/tools/social_dl.json")
+VERSION = "1.1.2"
+UPDATE_CHECK_URL = ("https://api.github.com/repos/vin7sen-droid/obsidian-img/"
+                    "contents/tools/social_dl.json?ref=main")   # 直查 API：gh-proxy 有 CDN 缓存
 CACHE_DIR = os.path.expanduser("~/.cache/social_dl")
 CHECK_INTERVAL = 86400
 
@@ -55,7 +55,12 @@ def check_update():
     if time.time() - cache.get("checked_at", 0) < CHECK_INTERVAL:
         return
     try:
-        req = urllib.request.Request(UPDATE_CHECK_URL)
+        hdrs = {"User-Agent": "social_dl", "Accept": "application/vnd.github.raw"}
+        try:                                   # 有 token 用 token（5000/h），没有走匿名（60/h 够每日一查）
+            hdrs["Authorization"] = "Bearer " + open("/root/.config/ghclip/token").read().strip()
+        except Exception:
+            pass
+        req = urllib.request.Request(UPDATE_CHECK_URL, headers=hdrs)
         with urllib.request.urlopen(req, timeout=3) as r:
             info = json.loads(r.read().decode("utf-8", "replace"))
             if not isinstance(info, dict):
