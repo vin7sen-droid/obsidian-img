@@ -141,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
             pass
         if u.path == "/refresh":
             try:
-                p = subprocess.run([PY, "/root/workspace/tools/refresh_all_comments.py"],
+                p = subprocess.run([PY, "/root/workspace/tools/refresh_all_comments.py", "--hours", "12"],
                                    capture_output=True, text=True, timeout=600)
                 tail = [l for l in (p.stdout or "").strip().split("\n") if "有变化" in l]
                 return self._json(200 if p.returncode == 0 else 500,
