@@ -1,5 +1,5 @@
 {
- "version": "2.0.1",
- "note": "同一版本只提醒一次，不再每天重复",
+ "version": "2.0.2",
+ "note": "版本检查改走 GitHub API（免 gh-proxy CDN 缓存延迟）；同版本只提醒一次",
  "url": "https://gh-proxy.com/https://raw.githubusercontent.com/vin7sen-droid/obsidian-img/main/tools/douyin_dl.py"
 }
