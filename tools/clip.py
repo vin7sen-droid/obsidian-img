@@ -831,7 +831,9 @@ def _sec_fp(block):
 
 
 def merge_comments(old_md, cmts):
-    """旧评论区整段保留，把新抓到而旧里没有的条目追加进去；返回 (新markdown, 新增条数)"""
+    """旧评论区整段保留；新抓到而旧里没有的条目按原文页顺序插回——
+    楼中楼挂回原主楼（插在其父主楼已有子楼之后），新增主楼按页面顺序插入；
+    确定不了锚点的才放末尾。返回 (新markdown, 新增条数)"""
     i = old_md.find("## 评论区")
     if i < 0:
         return None, 0
@@ -845,20 +847,42 @@ def merge_comments(old_md, cmts):
     new_sec = comments_section(cmts)
     sub = new_sec.split("\n", 1)[1] if "\n" in new_sec else ""
     items_new = _split_items(sub)
-    seen = {_sec_fp(b) for b in items_old}
-    added = [b for b in items_new if _sec_fp(b) not in seen]
-    if not added:
+    fps_old = {_sec_fp(b) for b in items_old}
+
+    def _is_hot(b):
+        return b.replace(_ZOOM_OPEN, "").lstrip().startswith("**热评 · ")
+
+    # 锚点 = 新条目在原文页顺序里前面最近的「已存在」条目
+    anchors, tail, last_seen = {}, [], None
+    for b in items_new:
+        fp = _sec_fp(b)
+        if fp in fps_old:
+            last_seen = fp
+        elif last_seen:
+            anchors.setdefault(last_seen, []).append(b)
+        else:
+            tail.append(b)
+    add_n = (sum(1 for bs in anchors.values() for b in bs if not _is_hot(b))
+             + sum(1 for b in tail if not _is_hot(b)))
+    if add_n == 0:
         return None, 0
     m = re.search(r"（(\d+) 条）", header)
     old_n = int(m.group(1)) if m else len(items_old)
-    add_n = sum(1 for b in added
-                if not b.replace(_ZOOM_OPEN, "").lstrip().startswith("**热评 · "))
     total = old_n + add_n
     header = re.sub(r"（\d+ 条）", "（%d 条）" % total, header, count=1)
     out = [header, ""]
     if explain:
         out += [explain, ""]
-    for b in items_old + added:
+    for b in items_old:
+        out += [b, ""]
+        fp = _sec_fp(b)
+        if fp in anchors:
+            for nb in anchors.pop(fp):
+                out += [nb, ""]
+    for bs in anchors.values():          # 兜底：同指纹锚点等边缘情况
+        for nb in bs:
+            out += [nb, ""]
+    for b in tail:
         out += [b, ""]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).rstrip(), add_n
 
