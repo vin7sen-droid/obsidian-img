@@ -211,6 +211,11 @@ def main():
             # 本机（权威源，有 .sync-master 标志）只推；跟随端只拉——同顺序双向会互相覆盖
             cmd = "push" if os.path.exists(MASTER_MARK) else "pull"
             log("auto 角色：%s" % cmd)
+        if cmd in ("pull", "sync") and os.path.exists(MASTER_MARK):
+            # 护栏：权威源 pull 会用远端旧版覆盖本机未推的改动（08:26 踩过一轮）。
+            # 灾难恢复确需拉取时：mv 标志文件移开 → 手工 pull → mv 回来。
+            sys.exit("拒绝 pull：本机是权威源（%s 存在），只推不拉；"
+                     "确需强制拉取请先移走标志文件。" % MASTER_MARK)
         if cmd == "push":
             return push()
         if cmd == "pull":
