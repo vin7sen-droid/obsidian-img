@@ -744,15 +744,15 @@ def _entry(c, prefix="", zoom=False):
     if zoom:
         head = '<span style="font-size:1.12em">%s</span>' % head
         body_txt = '<span style="font-size:1.12em">%s</span>' % body_txt
-    out = [head, "", body_txt, ""]
+    out = [head, "", body_txt]
     for k in (c.get("children") or []):
         kn = (k.get("userInfo") or {}).get("userNick") or "匿名"
         ru = (k.get("replyUserInfo") or {}).get("userNick")
         who = "↳ " + kn + (" 回复 " + ru if ru else "")
         kb = _ctxt(k) or "（图片评论）"
         kb = "\n".join(INDENT + ln for ln in kb.split("\n"))
-        out += [INDENT + "**%s** · %s · 赞 %s" % (who, _when(k), k.get("support", 0)), "",
-                kb, ""]
+        # 紧凑：楼中楼头行与正文连续两行，条目之间不空行（用户 2026-11-14 定）
+        out += [INDENT + "**%s** · %s · 赞 %s" % (who, _when(k), k.get("support", 0)), kb]
     return "\n".join(out).rstrip()
 
 
