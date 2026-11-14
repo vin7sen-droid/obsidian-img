@@ -5,7 +5,14 @@
 //   node /root/workspace/tools/mm.mjs "OpenAI ships a new model"
 //   node /root/workspace/tools/mm.mjs -f article.txt > article.zh.txt
 //   cat lines.txt | node /root/workspace/tools/mm.mjs
+//   node /root/workspace/tools/mm.mjs --refresh "Anthropic raised $13 billion"   # 删缓存重翻（TM 错译不自愈）
+//   node /root/workspace/tools/mm.mjs --no-cache -f test.txt                     # 全量真请求（变体重测用）
 //
+// 2026-11-15 实测定性（用户「照你改」）：MyMemory 是翻译记忆引擎——短句+常见搭配会命中语料库
+// 旧错译文、数字被硬套（实例 "raised $13 billion"→「30 亿美元」，改写措辞即对）。三条纪律：
+//   ① 抽样遇可疑数字，改写措辞重测再下结论（--refresh / --no-cache 就是为这个加的）
+//   ② 短句译文只看语义，数字一律以 numcheck.py 机检为准
+//   ③ 缓存错译不会自愈，重测必须 --refresh（或手动删 mm-cache.json）
 // 行为：逐行翻译，空行原样保留，已有中文的行原样输出；失败的行原样输出。
 // 额度：匿名 5000 字符/天，带 de=<邮箱> 50000 字符/天（按请求字符计）。
 //       邮箱读 ~/.dsh-ai-research/mm-email（600），环境变量 DSH_AI_RESEARCH_MM_EMAIL 可覆盖。
@@ -22,12 +29,21 @@ const EMAIL_FILE = path.join(os.homedir(), ".dsh-ai-research", "mm-email");
 
 const args = process.argv.slice(2);
 const workersArg = args.indexOf("--workers");
-const workers = workersArg >= 0 ? Math.max(1, Math.min(6, Number(args[workersArg + 1]) || 3)) : 3;
-const rest = args.filter((a, i) => !(workersArg >= 0 && (i === workersArg || i === workersArg + 1)));
+const workers = workersArg >= 0 ? Math.max(1, Math.min(6, Number(args[workersArg + 1])) || 3) : 3;
+const refreshArg = args.indexOf("--refresh");
+const noCache = args.includes("--no-cache");
+const rest = args.filter((a, i) =>
+  !(workersArg >= 0 && (i === workersArg || i === workersArg + 1)) &&
+  !(refreshArg >= 0 && (i === refreshArg || i === refreshArg + 1)) && a !== "--no-cache");
 
 let text = "";
 let fromArgv = false;
-if (rest[0] === "-f" || rest[0] === "--file") {
+if (refreshArg >= 0) {
+  // --refresh "text"：删该句缓存后单句强制重翻（TM 错译不会自愈，必须显式清）
+  if (!args[refreshArg + 1]) { console.error("用法：mm.mjs --refresh \"<原文>\""); process.exit(2); }
+  text = args[refreshArg + 1];
+  fromArgv = true;
+} else if (rest[0] === "-f" || rest[0] === "--file") {
   if (!rest[1]) { console.error("用法：mm.mjs -f <文件>"); process.exit(2); }
   text = fs.readFileSync(rest[1], "utf8");
 } else if (rest.length) {
@@ -47,6 +63,7 @@ if (!EMAIL) console.error("提示：未找到邮箱（~/.dsh-ai-research/mm-emai
 
 let cache = {};
 try { cache = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")); } catch { cache = {}; }
+if (refreshArg >= 0) { delete cache[slug(text)]; console.error("[mymemory] --refresh：已清除该句缓存，强制重翻"); }
 
 const isChinese = (s) => /[\u4e00-\u9fff]/.test(s);
 const slug = (s) => s.replace(/\s+/g, " ").trim();
@@ -55,9 +72,9 @@ let usedChars = 0;
 let hitCache = 0;
 let requested = 0;
 
-async function translateOne(src) {
+async function translateOne(src, force = false) {
   const key = src;
-  if (cache[key]) { hitCache++; return cache[key]; }
+  if (!force && !noCache && cache[key]) { hitCache++; return cache[key]; }
   const u = `${API}?q=${encodeURIComponent(src.slice(0, 500))}&langpair=${encodeURIComponent("en|zh-CN")}` +
     (EMAIL ? `&de=${encodeURIComponent(EMAIL)}` : "");
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -85,15 +102,17 @@ const todo = [];
 lines.forEach((l, i) => {
   const s = slug(l);
   if (!s || isChinese(s) || !/[A-Za-z]{2}/.test(s)) return;
-  if (!cache[s]) todo.push(i);
+  if (noCache || refreshArg >= 0 || !cache[s]) todo.push(i);   // --no-cache/--refresh 时全部视为待翻
 });
 
 const uniq = [...new Set(todo.map((i) => lines[i].trim()))];
 let cursor = 0;
+const fresh = new Set();
 async function worker() {
   while (cursor < uniq.length) {
     const src = uniq[cursor++];
-    await translateOne(src);
+    const r = await translateOne(src, noCache || refreshArg >= 0);
+    if (r != null) fresh.add(src);          // 本次真请求成功（区别于命中的旧缓存）
   }
 }
 await Promise.all(Array.from({ length: Math.min(workers, uniq.length || 1) }, worker));
@@ -101,6 +120,8 @@ await Promise.all(Array.from({ length: Math.min(workers, uniq.length || 1) }, wo
 const out = lines.map((l) => {
   const s = slug(l);
   if (!s || isChinese(s) || !/[A-Za-z]{2}/.test(s)) return l;
+  // --refresh/--no-cache 模式只认本次新请求的结果，绝不再回退到旧缓存（那正是要重测的错译）
+  if (noCache || refreshArg >= 0) return fresh.has(s) ? cache[s] : l;
   return cache[s] || l;
 });
 
@@ -112,3 +133,6 @@ try {
 process.stdout.write(out.join("\n") + (text.endsWith("\n") || fromArgv ? "\n" : ""));
 console.error(`[mymemory] 请求 ${requested} 条 / ${usedChars} 字符 · 缓存命中 ${hitCache} 条 · 累计缓存 ${Object.keys(cache).length} 条` +
   (EMAIL ? ` · de=${EMAIL}` : " · 匿名额度"));
+if (noCache || refreshArg >= 0) {
+  console.error("[mymemory] 提示：短句译文只看语义，数字一律以 numcheck.py 机检为准（TM 可能套错语料，实测 \"raised $13 billion\"→「30 亿美元」）");
+}
