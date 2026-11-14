@@ -143,7 +143,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 p = subprocess.run([PY, "/root/workspace/tools/refresh_all_comments.py", "--hours", "12"],
                                    capture_output=True, text=True, timeout=600)
-                tail = [l for l in (p.stdout or "").strip().split("\n") if "有变化" in l]
+                tail = [l for l in (p.stdout or "").strip().split("\n")
+                        if ("完成：" in l) or ("有变化" in l) or ("护栏" in l)]
                 return self._json(200 if p.returncode == 0 else 500,
                                   {"ok": p.returncode == 0, "detail": (tail or [""])[-1]})
             except Exception as e:
