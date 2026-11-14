@@ -63,4 +63,3 @@ def title_fallback(page, current=None, site_label=None):
             continue
         return c
     return None
-# local drift test
