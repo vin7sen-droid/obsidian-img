@@ -744,7 +744,7 @@ def _entry(c, prefix="", zoom=False):
     if zoom:
         head = '<span style="font-size:1.12em">%s</span>' % head
         body_txt = '<span style="font-size:1.12em">%s</span>' % body_txt
-    out = [head, "", body_txt]
+    out = [head, "", body_txt, ""]
     for k in (c.get("children") or []):
         kn = (k.get("userInfo") or {}).get("userNick") or "匿名"
         ru = (k.get("replyUserInfo") or {}).get("userNick")
