@@ -11,12 +11,14 @@
 原理：manifest.json 记录每个文件的 sha256。push=本地 sha 与 manifest 不符才 PUT；
 pull=远端 sha 与本地不符才下载。两台机器经 GitHub 中转收敛一致，单用户场景 last-write-wins。
 
-边界（不要越线）：
-  本同步器只管「内部工具」，不管下载器。*_dl.py（weibo_dl / douyin_dl / social_dl / ins_dl）
-  走各自的版本检查（tools/<name>.json + 脚本内 check_update），发版必须人工抬 VERSION。
-  原因：本同步器是 last-write-wins 且 pull 会自动覆盖本机文件，而下载器要求
-  「只有版本更新才上传」——两者规则相反，混在一起会互相踩。
-  FILES 里一旦出现 *_dl.py，脚本直接拒绝运行（见下方护栏）。
+边界（2026-11-14 方案 B 定版）：
+  本同步器管理「内部工具 + 下载器」两类。下载器（weibo_dl / douyin_dl）位于
+  workspace 根目录，在 FILES 里以 "@名字" 前缀引用（@ = /root/workspace 下）；
+  远端仍存 tools/<名字>，manifest key 用去 @ 的远端名，pull 时按 @ 映射放回根目录。
+  下载器脚本启动时同样异步触发 sync（与 clip.py 相同），因此另一台只跑下载器也能更新。
+  旧的「发版须人工抬 VERSION」提示制保留为辅助（*_dl.json 元数据），不再是必要环节。
+  护栏：无 @ 前缀的 *_dl.py（即误放进 tools/ 的下载器）直接拒绝运行。
+  FILES 里一旦出现裸 *_dl.py，脚本拒绝启动（见下方护栏）。
 """
 import base64, fcntl, hashlib, json, os, shutil, subprocess, sys, time
 import urllib.error, urllib.request
@@ -26,16 +28,32 @@ MASTER_MARK = "/root/workspace/.sync-master"   # 本机权威源标志：存在�
 BRANCH = "main"
 DIR = "tools"
 LOCAL = os.path.dirname(os.path.abspath(__file__))
+WORKSPACE = os.path.dirname(LOCAL)             # /root/workspace（下载器所在的根目录）
 TOKEN_FILE = "/root/.config/ghclip/token"
 BAK_SYNC = "/root/workspace/bak/sync"
 FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
-         "refresh_all_comments.py", "gh_sync.py", "update_check_template.md"]
-# 边界护栏：下载器一律不进本白名单（详见文件头 docstring）
-_BAD = [f for f in FILES if f.endswith("_dl.py")]
+         "refresh_all_comments.py", "gh_sync.py", "update_check_template.md",
+         "@weibo_dl.py", "@douyin_dl.py"]
+# 边界护栏：下载器只允许以 @ 前缀（workspace 根）引用；裸 *_dl.py = 误放 tools/，拒绝
+_BAD = [f for f in FILES if f.endswith("_dl.py") and not f.startswith("@")]
 if _BAD:
-    sys.exit("gh_sync 拒绝运行：FILES 里混入了下载器 %s\n"
-             "下载器请走版本检查（tools/<name>.json），不要纳入自动同步。"
+    sys.exit("gh_sync 拒绝运行：FILES 里混入了裸下载器 %s\n"
+             "下载器请用 \"@名字\" 前缀引用（放 workspace 根），不要复制进 tools/。"
              % ", ".join(_BAD))
+
+
+def remote_name(f):
+    """清单/远端统一用去 @ 的名字（远端与 manifest 没有 @ 概念）"""
+    return f[1:] if f.startswith("@") else f
+
+
+_REVMAP = {remote_name(f): f for f in FILES}
+
+
+def local_path(key):
+    """按远端名（manifest key）或 FILES 条目解析本地路径"""
+    f = _REVMAP.get(key, key)
+    return os.path.join(WORKSPACE, f[1:]) if f.startswith("@") else os.path.join(LOCAL, f)
 
 QUIET = "--quiet" in sys.argv
 
@@ -93,11 +111,11 @@ def _get_blob(name):
 def _local_manifest():
     m = {}
     for f in FILES:
-        p = os.path.join(LOCAL, f)
+        p = local_path(f)
         if os.path.exists(p):
             with open(p, "rb") as fh:
                 b = fh.read()
-            m[f] = {"sha256": hashlib.sha256(b).hexdigest(), "bytes": len(b)}
+            m[remote_name(f)] = {"sha256": hashlib.sha256(b).hexdigest(), "bytes": len(b)}
     return m
 
 
@@ -159,10 +177,10 @@ def push():
             try:
                 subprocess.run([sys.executable, "-c",
                                 "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)",
-                                os.path.join(LOCAL, f)], check=True, capture_output=True, timeout=30)
+                                local_path(f)], check=True, capture_output=True, timeout=30)
             except Exception as e:
                 sys.exit("push 中止：%s 语法不过（%s）——先修好再推，避免污染远端"
-                         % (f, (e.stderr or b"").decode("utf-8", "replace").strip()[:200]))
+                         % (remote_name(f), (e.stderr or b"").decode("utf-8", "replace").strip()[:200]))
     local = _local_manifest()
     remote, mani_sha = _get_manifest()
     files = remote.get("files", {})
@@ -172,7 +190,7 @@ def push():
         return 0
     ok = 0
     for f in changed:
-        with open(os.path.join(LOCAL, f), "rb") as fh:
+        with open(local_path(f), "rb") as fh:
             blob = fh.read()
         _, cur = gh("/repos/%s/contents/%s/%s" % (REPO, DIR, f))
         old = cur.get("sha") if code_ok(cur) else None
@@ -199,7 +217,7 @@ def pull():
         return 0
     todo = []
     for f, meta in files.items():
-        p = os.path.join(LOCAL, f)
+        p = local_path(f)
         try:
             if os.path.exists(p):
                 with open(p, "rb") as fh:
@@ -219,8 +237,9 @@ def pull():
         if not blob or sha != files[f].get("sha256"):
             log("pull ✗ %s（下载失败或校验不符）" % f)
             continue
+        p = local_path(f)
         if f.endswith(".py"):
-            tmp = os.path.join(LOCAL, f + ".sync-tmp")
+            tmp = p + ".sync-tmp"
             with open(tmp, "wb") as fh:
                 fh.write(blob)
             try:
@@ -232,11 +251,10 @@ def pull():
                 os.unlink(tmp)
                 continue
             os.unlink(tmp)
-        p = os.path.join(LOCAL, f)
         if os.path.exists(p):
             os.makedirs(bakdir, exist_ok=True)
-            shutil.copy2(p, os.path.join(bakdir, f))
-        tmp = os.path.join(LOCAL, f + ".sync-tmp")
+            shutil.copy2(p, os.path.join(bakdir, remote_name(f)))
+        tmp = p + ".sync-tmp"
         with open(tmp, "wb") as fh:
             fh.write(blob)
         os.replace(tmp, p)
@@ -274,7 +292,7 @@ def rollback(ts=None):
             except Exception as e:
                 log("  ✗ %s（备份文件本身编译不过，跳过）" % f)
                 continue
-        shutil.copy2(sfile, os.path.join(LOCAL, f))
+        shutil.copy2(sfile, local_path(f))
         log("  ✓ %s" % f)
     log("完成。如需回到更早版本：python3 gh_sync.py rollback <时间戳>")
     if os.path.exists(MASTER_MARK):
@@ -284,6 +302,14 @@ def rollback(ts=None):
 
 
 def main():
+    # 自愈清理：旧版 pull 曾把 @ 下载器误拉进 tools/（remote_name 重名副本）——删掉，
+    # workspace 根才是真身。幂等：不存在则零动作。
+    for f in FILES:
+        if f.startswith("@"):
+            stray = os.path.join(LOCAL, remote_name(f))
+            if os.path.exists(stray):
+                os.remove(stray)
+                log("清理误放副本：%s（下载器真身在 %s）" % (stray, local_path(f)))
     lock = os.path.expanduser("~/.cache/ghsync.lock")
     os.makedirs(os.path.dirname(lock), exist_ok=True)
     fh = open(lock, "w")
