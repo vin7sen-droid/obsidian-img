@@ -10,6 +10,13 @@
 
 原理：manifest.json 记录每个文件的 sha256。push=本地 sha 与 manifest 不符才 PUT；
 pull=远端 sha 与本地不符才下载。两台机器经 GitHub 中转收敛一致，单用户场景 last-write-wins。
+
+边界（不要越线）：
+  本同步器只管「内部工具」，不管下载器。*_dl.py（weibo_dl / douyin_dl / social_dl / ins_dl）
+  走各自的版本检查（tools/<name>.json + 脚本内 check_update），发版必须人工抬 VERSION。
+  原因：本同步器是 last-write-wins 且 pull 会自动覆盖本机文件，而下载器要求
+  「只有版本更新才上传」——两者规则相反，混在一起会互相踩。
+  FILES 里一旦出现 *_dl.py，脚本直接拒绝运行（见下方护栏）。
 """
 import base64, fcntl, hashlib, json, os, shutil, subprocess, sys, time
 import urllib.error, urllib.request
@@ -23,6 +30,13 @@ TOKEN_FILE = "/root/.config/ghclip/token"
 BAK_SYNC = "/root/workspace/bak/sync"
 FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
          "refresh_all_comments.py", "gh_sync.py", "update_check_template.md"]
+# 边界护栏：下载器一律不进本白名单（详见文件头 docstring）
+_BAD = [f for f in FILES if f.endswith("_dl.py")]
+if _BAD:
+    sys.exit("gh_sync 拒绝运行：FILES 里混入了下载器 %s\n"
+             "下载器请走版本检查（tools/<name>.json），不要纳入自动同步。"
+             % ", ".join(_BAD))
+
 QUIET = "--quiet" in sys.argv
 
 
