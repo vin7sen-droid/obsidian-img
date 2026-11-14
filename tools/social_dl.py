@@ -106,7 +106,18 @@ def run_one(text):
         return 1
 
 
+def _sync_bg():
+    """异步触发 tools/gh_sync.py sync --quiet（方案 B：下载器启动即同步工具集），失败静默"""
+    try:
+        gs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "gh_sync.py")
+        subprocess.Popen([sys.executable, gs, "sync", "--quiet"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def main():
+    _sync_bg()   # 方案 B：下载器启动也触发工具同步（静默，失败不影响下载）
     argv = sys.argv[1:]
     if "--version" in argv:
         print("social_dl " + VERSION)
