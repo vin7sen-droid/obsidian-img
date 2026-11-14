@@ -8,7 +8,7 @@
     [[ReadItLater]] [[Article]] → YAML frontmatter → # 标题 → 标签行 → 原文行 → 正文
     IT之家额外抓评论区：加粗条目头 + 正文段落（字号与正文一致，不用标题/引用块）
 """
-import argparse, gzip, hashlib, html as htmllib, json, os, re, shutil, sys, time
+import argparse, gzip, hashlib, html as htmllib, json, os, re, shutil, subprocess, sys, time
 import urllib.request
 import trans
 from datetime import datetime, timedelta
@@ -905,6 +905,14 @@ def main():
     ap.add_argument("--summary", default=None, help="1-3 句摘要；缺省用 meta description 截前两句")
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
     a = ap.parse_args()
+    try:  # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
+        _gs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh_sync.py")
+        if os.path.exists(_gs):
+            subprocess.Popen([sys.executable, _gs, "auto", "--quiet"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
     page, final = fetch(a.url)
 
