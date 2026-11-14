@@ -50,10 +50,10 @@ UA = ('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
 REF = 'https://weibo.com/'
 DEF_OUT = '/sdcard/Download/weibo'
 
-VERSION = '2.0.1'
+VERSION = '2.0.2'
 # 版本检查源（只提示、不自动替换）：24 小时内最多查一次，失败静默。
-UPDATE_CHECK_URL = ('https://gh-proxy.com/https://raw.githubusercontent.com/'
-                    'vin7sen-droid/obsidian-img/main/tools/weibo_dl.json')
+UPDATE_CHECK_URL = ('https://api.github.com/repos/vin7sen-droid/obsidian-img/'
+                    'contents/tools/weibo_dl.json?ref=main')   # 直查 API：gh-proxy 有 CDN 缓存，发版后提示会滞后
 CACHE_DIR = os.path.expanduser('~/.cache/weibo_dl')
 CHECK_INTERVAL = 86400
 
@@ -259,7 +259,12 @@ def check_update():
     if time.time() - cache.get('checked_at', 0) < CHECK_INTERVAL:
         return
     try:
-        with _open(UPDATE_CHECK_URL, referer='https://github.com/', timeout=3) as r:
+        hdrs = {'Accept': 'application/vnd.github.raw'}
+        try:   # 有 token 用 token（5000/h），没有走匿名（60/h 够每日一查）
+            hdrs['Authorization'] = 'Bearer ' + open('/root/.config/ghclip/token').read().strip()
+        except Exception:
+            pass
+        with _open(UPDATE_CHECK_URL, referer='', timeout=3, extra=hdrs) as r:
             info = json.loads(r.read().decode('utf-8', 'replace'))
     except Exception:
         return
