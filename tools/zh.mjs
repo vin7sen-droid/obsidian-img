@@ -89,15 +89,32 @@ for (const l of lines) {
 // 2) 整批翻译
 const zh = await translateTexts(guarded, { verbose: !!process.env.ZH_VERBOSE });
 
-// 3) 行数守恒：非空输入行必须得到非空、无残留占位符的译文，否则单行重翻（单行提交占位符稳定）
+// 3) 行数守恒 + 占位符计数：非空输入行必须得到非空译文，且 NUM 占位符一个不丢——
+//    「被吞+附近数字串位」是静默损坏（实测 "RFC 7523"→"RFC 5."、"HTTP 401"→"HTTP 200"，
+//    无残留、无空行，只查残留拦不住），必须按送出数逐行对账；对不齐单行重翻，仍不齐置 null
+//    由输出段按原文兜底，绝不让错数字落盘。
+// numOk：每个送出的 NUM 占位符字母都必须在译文里至少出现一次（集合覆盖）。
+// 只数个数不够——腾讯会「复制」占位符补位（实测 "HTTP NUMA … HTTP NUMB"→"NUMA … NUMA"，
+// 计数守恒但 401 变 200），必须逐字母对账。
+const numOk = (t, bag) => {
+  if (!bag) return true;
+  const need = Object.keys(bag.__num);
+  if (!need.length) return true;
+  const got = new Set((String(t).match(/NUM([A-Za-z])/g) || []).map((m) => m.slice(3).toUpperCase()));
+  return need.every((c) => got.has(c));
+};
 for (let i = 0; i < guarded.length; i++) {
   if (fenceFlag[i] || !guarded[i].trim()) continue;
   let bad = zh[i] == null || !String(zh[i]).trim();
-  if (!bad && bags[i]) bad = lostPlaceholder(String(zh[i]), bags[i]) || /NUM[A-Za-z]/.test(String(zh[i]));
+  if (!bad && bags[i]) bad = lostPlaceholder(String(zh[i]), bags[i]) || /NUM[A-Za-z]/.test(String(zh[i])) || !numOk(String(zh[i]), bags[i]);
   if (bad) {
-    const one = await translateTexts([guarded[i]]);
-    if (one && one[0] && String(one[0]).trim() && !lostPlaceholder(one[0], bags[i]) && !/NUM[A-Za-z]/.test(one[0])) {
-      zh[i] = one[0];
+    // 重翻输入加零宽空格扰动：单行 key 与批处理相同，会命中批处理写入的坏缓存，扰动后强制真请求
+    const one = await translateTexts([guarded[i] + "\u200b"]);
+    const oneT = one && one[0] ? String(one[0]).replace(/\u200b/g, "") : null;
+    if (oneT && oneT.trim() && !lostPlaceholder(oneT, bags[i]) && !/NUM[A-Za-z]/.test(oneT) && numOk(oneT, bags[i])) {
+      zh[i] = oneT;
+    } else {
+      zh[i] = null;   // 单行重翻也保不全 → 输出段按原文兜底
     }
   }
 }
@@ -117,10 +134,11 @@ for (let i = 0; i < lines.length; i++) {
   if (t != null) {
     t = fixParens(restoreNames(swapNames(restoreNum(t, bags[i])), bags[i]));   // 先 swapNames 后还原（避免 URL 里的 gates 等子串被换）
   }
-  if (t == null || /PERSON[A-Z]/i.test(t) || /NUM[A-Za-z]/.test(t)) {
-    const again = await translateTexts([guarded[i]]);   // 兜底也用占位版重翻（单行提交占位符稳定，且 URL/数字同样受保护）
-    if (again && again[0]) {
-      t = fixParens(restoreNames(swapNames(restoreNum(again[0], bags[i])), bags[i]));
+  if (t == null || /PERSON[A-Z]/i.test(t) || /NUM[A-Za-z]/.test(t) || !numOk(zh[i] ?? "", bags[i])) {
+    const again = await translateTexts([guarded[i] + "\u200b"]);   // 零宽扰动绕过坏缓存（同上）
+    const againT = again && again[0] ? String(again[0]).replace(/\u200b/g, "") : null;
+    if (againT && numOk(againT, bags[i])) {
+      t = fixParens(restoreNames(swapNames(restoreNum(againT, bags[i])), bags[i]));
       if (/NUM[A-Za-z]/.test(t)) t = src;               // 终极兜底：数字还原失败的行保留原文
     } else t = src;
   }
