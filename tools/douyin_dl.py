@@ -10,7 +10,7 @@
 幂等：目标文件已存在（>8KB）自动跳过，同作者新链接并入原文件夹不重复下载。
 其他：--check 配方体检｜--version 版本｜--no-update-check 跳过更新检查。
 """
-import urllib.request, urllib.parse, json, re, os, sys, time, base64
+import urllib.request, urllib.parse, json, re, os, sys, time, base64, subprocess
 
 VERSION = '2.0.2'
 REPO = 'vin7sen-droid/obsidian-img'
@@ -272,10 +272,21 @@ def check_update():
     except Exception:
         pass
 
+def _sync_bg():
+    """异步触发 tools/gh_sync.py sync --quiet（方案 B：下载器启动即同步工具集），失败静默"""
+    try:
+        gs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "gh_sync.py")
+        subprocess.Popen([sys.executable, gs, "sync", "--quiet"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def main():
     argv = [a for a in sys.argv[1:] if a != '--no-update-check']
     if '--version' in sys.argv[1:]:
         print('douyin_dl ' + VERSION); sys.exit(0)
+    _sync_bg()   # 方案 B：下载器启动也触发工具同步（静默，失败不影响下载）
     if len(argv) == 1 and argv[0] == '--check':
         check(); sys.exit(0)
     if len(argv) == len(sys.argv[1:]):  # 未显式跳过时才查更新
