@@ -1,1 +1,5 @@
-{"version": "1.1.0", "note": "社媒下载器 social_dl", "url": "https://gh-proxy.com/https://raw.githubusercontent.com/vin7sen-droid/obsidian-img/main/tools/social_dl.py"}
+{
+ "version": "1.1.1",
+ "note": "同一版本只提醒一次，不再每天重复",
+ "url": "https://gh-proxy.com/https://raw.githubusercontent.com/vin7sen-droid/obsidian-img/main/tools/social_dl.py"
+}
