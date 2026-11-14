@@ -1,1 +1,5 @@
-{"version": "2.0.0", "note": "", "url": "https://gh-proxy.com/https://raw.githubusercontent.com/vin7sen-droid/obsidian-img/main/tools/douyin_dl.py"}
+{
+ "version": "2.0.1",
+ "note": "同一版本只提醒一次，不再每天重复",
+ "url": "https://gh-proxy.com/https://raw.githubusercontent.com/vin7sen-droid/obsidian-img/main/tools/douyin_dl.py"
+}
