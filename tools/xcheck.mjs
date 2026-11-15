@@ -426,6 +426,11 @@ const ENGINE_ZH = {
   mymemory: "MyMemory",
 };
 
+// X 条目译文常带「（推文，214 转发）」「（转推，N 转发，N 赞）」类社交前缀（雷达线渲染产物）——
+// 前缀里的数字会被 numVerdict 当成译文数字（原文没有 214 → extra 误报，实测 6 条全由它触发），送检前剥掉。
+const SOCIAL_PREFIX_RE = /^（(?:推文|转推|推)[^）]*）\s*/;
+const stripSocialPrefix = (s) => String(s || "").replace(SOCIAL_PREFIX_RE, "");
+
 export async function crossCheck(res, opts = {}) {
   const engine = String(opts.engine || "caiyun").toLowerCase();
   const conc = opts.concurrency || 3;
@@ -433,13 +438,15 @@ export async function crossCheck(res, opts = {}) {
   const deadline = Date.now() + (opts.budgetMs ?? 180000); // 墙钟上限：超时即停止，不让质检拖死管线
   const pairs = [];
   (res.items || []).forEach((it, i) => {
-    if (it.title_zh && it.title) pairs.push({ kind: "title", idx: i, en: it.title, zh: it.title_zh });
-    if (it.summary_zh && it.summary) pairs.push({ kind: "summary", idx: i, en: it.summary, zh: it.summary_zh });
+    const zt = stripSocialPrefix(it.title_zh), zs = stripSocialPrefix(it.summary_zh);
+    if (zt && it.title) pairs.push({ kind: "title", idx: i, en: it.title, zh: zt });
+    if (zs && it.summary) pairs.push({ kind: "summary", idx: i, en: it.summary, zh: zs });
   });
   for (const k of ["hn", "reddit", "x", "weixin"]) {
     ((res.buzz && res.buzz[k]) || []).forEach((b, i) => {
       const en = b.title || b.name || b.text || "";
-      if (b.title_zh && en) pairs.push({ kind: "buzz-" + k, idx: i, en, zh: b.title_zh });
+      const z = stripSocialPrefix(b.title_zh);
+      if (z && en) pairs.push({ kind: "buzz-" + k, idx: i, en, zh: z });
     });
   }
   const ctx = { conc, failBudget, failed: 0, consec: 0, limited: false, deadline };
