@@ -5,8 +5,23 @@
     python3 tools/clip.py <url> [--out DIR] [--no-comments] [--tags "a b c"] [--name 文件名]
 
 约定（与既有剪藏一致）:
-    [[ReadItLater]] [[Article]] → YAML frontmatter → # 标题 → 标签行 → 原文行 → 正文
+    YAML frontmatter（created/url/author/tags）→ # 标题 → 摘要 → 正文 → --- → ## 评论区
     IT之家额外抓评论区：加粗条目头 + 正文段落（字号与正文一致，不用标题/引用块）
+
+2026-11-16 优化（备份 bak/clip.py.0516.bak，改完新旧输出对同一篇逐字节一致）:
+    ① safe_name()：文件名先反转义 HTML 实体（&#183; 曾原样落进文件名）、压连续空格、
+       按 240 字节截断（/sdcard 是 FUSE，255 字节上限，长中文标题会 OSError）
+    ② meta()：改为一次解析整页 meta 成 dict，兼容单双引号与属性任意顺序（原实现只认双引号）
+    ③ fetch()：Content-Encoding 用子串判断（原 == "gzip"，遇 "GZIP"/"gzip, br" 漏解压成乱码），
+       顺带支持 deflate
+    ④ _host_blocked()：探图改 HEAD + 8s 超时（原 GET + 15s，十张图的稿子白付十次下载），
+       405 时回落 GET
+    ⑤ clean_body() 去掉对已清洗正文的二次调用（双跑取长路径原来对 8 万字白跑一遍全量正则）
+    ⑥ pubtime 解析加 try/except（格式一变就 ValueError 让整次剪藏崩）
+    ⑦ tags 上限 2 → 3（标签规则本就是 1-3 个，tags[:2] 丢用户显式给的第三个）
+    ⑧ --stdout 不再触发 gh_sync 后台推送（只读路径不该有写侧副作用）
+    ⑨ 文件读写统一 _read_text/_write_text（with 语义；刻意不做 tmp+replace——换 inode 会动
+       Obsidian 的创建时间排序）
 """
 import argparse, gzip, hashlib, html as htmllib, json, os, re, shutil, subprocess, sys, time, zlib
 import urllib.request
@@ -1040,17 +1055,17 @@ def main():
     ap.add_argument("--summary", default=None, help="摘要；缺省取正文前 3 段第一个含数字句（2026-11-16 定），找不到回落首段前两句")
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
     a = ap.parse_args()
-    try:  # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
-        # 2026-11-16：--stdout 是只读路径（精修/核对原文用），不该有推送副作用
-        if a.stdout:
-            raise RuntimeError("stdout mode")
-        _gs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh_sync.py")
-        if os.path.exists(_gs):
-            subprocess.Popen([sys.executable, _gs, "auto", "--quiet"],
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
+    # 2026-11-16：--stdout 是只读路径（精修/核对原文用），不该有推送副作用
+    if not a.stdout:
+        try:
+            _gs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh_sync.py")
+            if os.path.exists(_gs):
+                subprocess.Popen([sys.executable, _gs, "auto", "--quiet"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
     page, final = fetch(a.url)
 
