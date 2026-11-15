@@ -316,7 +316,7 @@ async function fillMyMemory(pairs, ctx) {
 //   ② 否定词丢失：原文有否定、译文一个否定字都没有
 const FUNC_WORD = /\b(the|of|and|to|in|for|with|that|this|is|are|was|were|will|would|from|by|on|as|at|it)\b/i;
 const ENG_RUN = /(?:[A-Za-z][A-Za-z'’\-]+[ ,]+){4,}/g;
-const NEG_EN = /\b(not|no|never|denies|denied|refus\w*|without|fails? to|failed to|cannot|can't|n't|isn't|aren't|won't|doesn't|don't)\b/i;
+const NEG_EN = /\b(not|never|denies|denied|refus\w*|without|fails? to|failed to|cannot|can't|n't|isn't|aren't|won't|doesn't|don't)\b|\bno\b(?!\.\s*\d)/i;
 const NEG_ZH = /[不没未无否拒禁非]/;
 // 站点样板句（Google News / 聚合站尾巴）：先把它们从原文剥掉再判断否定，
 // 否则「Audio playback is not supported on your browser」这类样板会被当成主句否定而误报。
@@ -381,7 +381,7 @@ const BRAND_ZH = {
   "Anthropic": ["Anthropic", "anthropic"], "DeepMind": ["DeepMind", "深层思维"],
   "Hugging Face": ["Hugging Face", "抱抱脸", "HF"], "xAI": ["xAI"],
   "AWS": ["AWS", "亚马逊云"], "ByteDance": ["字节跳动"], "Tencent": ["腾讯"],
-  "Alibaba": ["阿里巴巴"], "Baidu": ["百度"], "Xiaomi": ["小米"], "Huawei": ["华为"],
+  "Alibaba": ["阿里巴巴", "阿里"], "Baidu": ["百度"], "Xiaomi": ["小米"], "Huawei": ["华为"],
 };
 const kwEntityHit = (kw, sLower, sRaw) => {
   if (sLower.includes(kw.toLowerCase())) return true;
@@ -406,7 +406,8 @@ export function keywordCheck(en, zh, nameMap) {
       if (!new RegExp("\\b" + escRe(enName) + "\\b", "i").test(en)) continue;
       seenZh.add(zhName);
       const tokens = enName.toLowerCase().split(/\s+/).filter((t) => t.length >= 4);
-      const kept = sRaw.includes(zhName) || tokens.some((t) => sLower.includes(t));
+      const segs = zhName.split("·").filter((x) => x.length >= 2);
+      const kept = sRaw.includes(zhName) || segs.some((x) => sRaw.includes(x)) || tokens.some((t) => sLower.includes(t));
       if (!kept) lost.push(`${enName}→${zhName}`);
     }
   }
@@ -462,10 +463,11 @@ export async function crossCheck(res, opts = {}) {
   // 本地质检先过一遍：不依赖引擎，因此连第二引擎没覆盖的对也能查
   for (const p of pairs) {
     const q = qualityCheck(p.en, p.zh) || keywordCheck(p.en, p.zh, KW_NAME_ENTRIES) || aliasCheck(p.en, p.zh);
-    if (q) flagged.push({ ...p, kind: p.kind, level: q.level, reason: q.reason });
+    if (q) { flagged.push({ ...p, kind: p.kind, level: q.level, reason: q.reason }); p.localFlag = true; }
   }
   for (const p of pairs) {
     if (!p.g) { skipped++; continue; }
+    if (p.localFlag) continue;   // 本地规则已 flag 的条目不再做数字比对（垃圾条目/漏译条数字比对必是噪音，避免同条双报）
     checked++;
     const v = numVerdict(p.en, p.zh, p.g);
     if (v === "ok") continue;
