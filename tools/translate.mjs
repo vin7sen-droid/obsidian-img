@@ -96,7 +96,64 @@ function unitZh(s) {
     .replace(/(\d)\s+(?=[太吉兆千万]?瓦)/g, "$1")   // 「1.5 吉瓦」→「1.5吉瓦」
     .replace(/(\d)个(?=[太吉兆千万]?瓦)/g, "$1");   // 引擎给占位符补的量词：「114个兆瓦」→「114兆瓦」
 }
-// 量级词 SI 换算（2026-11-15 加，从 zh.mjs 第三版防御移植）：腾讯对 trillion/billion/
+// 习语/惯用语定译表（2026-11-15 加）：腾讯对财经/科技习语逐词直译（实测 "Blessing in disguise"→
+// 「伪装的祝福」应为因祸得福、"picks and shovels"→「挑选和铲」应为卖铲人/基础设施供应商、
+// "no jerks culture"→「没有混蛋的文化」），整短语占位、还原定译中文，与量级词同机制。
+const IDIOM_ZH = [
+  [/(?:a\s+)?blessing\s+in\s+disguise/i, "因祸得福"],
+  [/picks?\s+and\s+shovels/i, "卖铲人（基础设施供应商）"],
+  [/(?:doubl)(?:e|es|ed|ing)\s+down(?:\s+on)?/i, "加码"],
+  [/game\s+changer/i, "游戏规则改变者"],
+  [/silver\s+lining/i, "一线希望"],
+  [/moonshot/i, "登月式豪赌"],
+  [/sea\s+change/i, "根本性转变"],
+  [/paradigm\s+shift/i, "范式转变"],
+  [/elephant\s+in\s+the\s+room/i, "众人避谈的问题"],
+  [/move\s+the\s+needle/i, "带来实质改变"],
+  [/low[- ]hanging\s+fruit/i, "触手可及的成果"],
+  [/golden\s+goose/i, "摇钱树"],
+  [/tip\s+of\s+the\s+iceberg/i, "冰山一角"],
+  [/flywheel\s+effect?/i, "飞轮效应"],
+  [/\bmoat\b/i, "护城河"],
+  [/land\s+grab/i, "市场抢夺战"],
+  [/land\s+and\s+expand/i, "先落地再扩张"],
+  [/race\s+to\s+the\s+bottom/i, "底线竞争"],
+  [/winner[- ]takes[- ]all/i, "赢者通吃"],
+  [/level\s+playing\s+field/i, "公平竞争环境"],
+  [/nail\s+in\s+the\s+coffin/i, "定局的一击"],
+  [/canary\s+in\s+the\s+coal\s+mine/i, "预警信号"],
+  [/writing\s+on\s+the\s+wall/i, "不祥之兆"],
+  [/house\s+of\s+cards/i, "纸牌屋（一推就倒）"],
+  [/wild\s+west/i, "无监管地带"],
+  [/smoking\s+gun/i, "铁证"],
+  [/blowout\s+(?:quarter|earnings|results)/i, "远超预期的财报"],
+  [/home\s+run/i, "大获成功"],
+  [/slam\s+dunk/i, "十拿九稳"],
+  [/hail\s+mary/i, "孤注一掷"],
+  [/black\s+swan/i, "黑天鹅"],
+  [/grey\s+rhino|gray\s+rhino/i, "灰犀牛"],
+  [/whack[- ]a[- ]mole/i, "打地鼠（按下葫芦浮起瓢）"],
+  [/no\s+strings\s+attached/i, "无附加条件"],
+  [/pie\s+in\s+the\s+sky/i, "空中楼阁"],
+  [/can\s+of\s+worms/i, "一摊子麻烦"],
+  [/pandora's\s+box/i, "潘多拉魔盒"],
+  [/arms\s+race/i, "军备竞赛"],
+  [/leapfrog/i, "弯道超车"],
+  [/unicorn\s+startup|unicorn\s+company|\bunicorn\b/i, "独角兽"],
+  [/down\s+round/i, "估值缩水融资轮"],
+  [/bloodbath/i, "血洗（暴跌）"],
+  [/dead\s+cat\s+bounce/i, "死猫跳"],
+  [/catch\s+a\s+falling\s+knife/i, "接飞刀"],
+  [/\bgut[- ]punch\b/i, "沉重一击"],
+  [/['"“”「]?\s*no\s+['"“”「]?\s*jerk(?:s)?['"“”」]?\s+(?:rule|policy|culture)/i, "「不混蛋」文化"],
+];
+const IDIOM_RE = new RegExp("(" + IDIOM_ZH.map((r) => "(?:" + r[0].source + ")").join("|") + ")(?![A-Za-z])", "gi");
+const IDIOM_LOOKUP = IDIOM_ZH; // 依数组顺序命中（先长后短由条目自身正则保证）
+function idiomZh(m) {
+  for (const [re, zh] of IDIOM_LOOKUP) { re.lastIndex = 0; if (re.test(m)) return zh; }
+  return m;
+}
+
 // million/crore/lakh 系统性错译 10~100 倍（$1.4 Trillion→「1.4美元」、Rs 18 crore→「18亿卢比」、
 // ₹1.88 Lakh Crore→「18.8亿卢比」，连续两天 xcheck 各抓 3 条同类），换措辞救不了——整组占位，
 // 还原值直接写**换算后的中文**（$1.4 Trillion→「1.4万亿美元」），restore 零改动自动还原。
@@ -116,6 +173,8 @@ function scaleZh(m, cur, num, unit) {
 function protect(text, bag) {
   const put = (s) => { const i = bag.length; bag.push(s); return "zqx" + i + "zqx"; };
   let out = text.replace(PREFIX_RE, (m) => put(m));   // 先护「模型名+版本+代号」
+  // 习语定译（2026-11-15）：整短语占位、还原定译中文，排在人名之前（习语内无实体冲突）
+  out = out.replace(IDIOM_RE, (m) => put(idiomZh(m)));
   // 人名（2026-11-14 接入 name-guard 共享 NAMES 表，与 zh.mjs 同源）：
   // 占位还原值是**中文译名**（Jensen Huang→黄仁勋），不是原词——雷达标题里的人名不再靠引擎音译。
   out = out.replace(NAME_RE, (m) => put(NAME_MAP.get(m.toLowerCase()) || m));
