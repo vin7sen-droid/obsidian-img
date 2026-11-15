@@ -6,6 +6,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { PROTECT_WORDS } from "./translate.mjs";
+import { NAME_MAP } from "./name-guard.mjs";
+// 关键词对齐用的实体表：公司/机构/模型（PROTECT_WORDS）∪ 人名表（NAME_MAP 的英文侧）。
+// 排除两类：① 有正常中文译法的技术缩写（LLM/GPU/API…译成中文不算丢失）；② NAMES 表里
+// 「译名=英文原形」的保留英文术语（agent/llm/metis…），它们不是人名、不适用「必须留痕」。
+const TECH_TERMS = new Set(["LLM", "LLMS", "AGI", "API", "SDK", "GPU", "TPU", "MOE", "RAG", "LORA", "GGUF", "TTS", "ASR", "OCR", "COPILOT", "PHI"]);
+const KW_ENTITIES = PROTECT_WORDS.filter((w) => !TECH_TERMS.has(w.toUpperCase()));
+const KW_NAME_ENTRIES = [...NAME_MAP.entries()].filter(([en, zh]) => zh.toLowerCase() !== en.toLowerCase());
 
 const GURL = "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=en&tl=zh-CN&q=";
 // 第二通道默认彩云小译：国内直连、40 条/批约 0.6s、数字与单位保留好（人名会音译，不影响数字比对）；
@@ -329,6 +337,50 @@ export function qualityCheck(en, zh) {
   return null;
 }
 
+// ── 关键词对齐检查（2026-11-15 借鉴用户建议：双引擎/原文-译文的关键词重合度 = 语义风险信号）。
+// 做法：原文里出现的「实体关键词」（公司/机构/模型表 + 人名表）必须在译文里留痕——
+// 英文原形（大小写不敏感）或通行中文别名任一出现即算保留；全部丢失才报。
+// 纯本地计算零请求，只报丢失（报"多"没有意义：译文里出现原文没有的词是改写，不是丢失）。
+// 典型实抓：Anthropic PBC→「中国人民银行」（Anthropic 整词消失）、NasdaqGM→「纳斯达克通用汽车公司」。
+const escRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// 品牌通行中文别名：译文写中文不算丢失
+const BRAND_ZH = {
+  "Google": ["谷歌"], "Microsoft": ["微软"], "Apple": ["苹果"], "Amazon": ["亚马逊"],
+  "NVIDIA": ["英伟达"], "Nvidia": ["英伟达"], "AMD": ["超威"], "Intel": ["英特尔"],
+  "TSMC": ["台积电"], "Samsung": ["三星"], "Tesla": ["特斯拉"], "Meta": ["Meta", "脸书"],
+  "Qualcomm": ["高通"], "Broadcom": ["博通"], "OpenAI": ["OpenAI", "openai"],
+  "Anthropic": ["Anthropic", "anthropic"], "DeepMind": ["DeepMind", "深层思维"],
+  "Hugging Face": ["Hugging Face", "抱抱脸", "HF"], "xAI": ["xAI"],
+  "AWS": ["AWS", "亚马逊云"], "ByteDance": ["字节跳动"], "Tencent": ["腾讯"],
+  "Alibaba": ["阿里巴巴"], "Baidu": ["百度"], "Xiaomi": ["小米"], "Huawei": ["华为"],
+};
+const kwEntityHit = (kw, sLower, sRaw) => {
+  if (sLower.includes(kw.toLowerCase())) return true;
+  for (const alias of BRAND_ZH[kw] || []) if (sRaw.includes(alias)) return true;
+  return false;
+};
+export function keywordCheck(en, zh, nameMap) {
+  const sRaw = String(zh || "");
+  if (!sRaw.trim()) return null;
+  const sLower = sRaw.toLowerCase();
+  const lost = [];
+  for (const kw of KW_ENTITIES) {
+    if (new RegExp("\\b" + escRe(kw) + "\\b").test(en) && !kwEntityHit(kw, sLower, sRaw)) lost.push(kw);
+  }
+  // 人名：name-guard 的 NAME_MAP（英文名→中文译名）。原文出现英文人名，译文既没有中文译名
+  // 也没有任何英文 token（姓或名）→ 判丢失（被音译成不相干的中文，如 Huang→黄光裕/胡锦涛，属于这类）。
+  if (nameMap) {
+    for (const [enName, zhName] of nameMap) {
+      if (!new RegExp("\\b" + escRe(enName) + "\\b", "i").test(en)) continue;
+      const tokens = enName.toLowerCase().split(/\s+/).filter((t) => t.length >= 4);
+      const kept = sRaw.includes(zhName) || tokens.some((t) => sLower.includes(t));
+      if (!kept) lost.push(`${enName}→${zhName}`);
+    }
+  }
+  if (!lost.length) return null;
+  return { level: "mid", reason: "实体关键词在译文中丢失（语义风险，人工判）：" + lost.slice(0, 3).join("、") };
+}
+
 const ENGINE_ZH = {
   caiyun: "彩云小译（失败项自动回退 MyMemory）",
   "caiyun+mymemory": "彩云小译（失败项自动回退 MyMemory）",
@@ -376,7 +428,7 @@ export async function crossCheck(res, opts = {}) {
   let checked = 0, skipped = 0;
   // 本地质检先过一遍：不依赖引擎，因此连第二引擎没覆盖的对也能查
   for (const p of pairs) {
-    const q = qualityCheck(p.en, p.zh);
+    const q = qualityCheck(p.en, p.zh) || keywordCheck(p.en, p.zh, KW_NAME_ENTRIES);
     if (q) flagged.push({ ...p, kind: p.kind, level: q.level, reason: q.reason });
   }
   for (const p of pairs) {
