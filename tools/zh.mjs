@@ -55,7 +55,7 @@ text = text.replace(/\bclaims\b(?=\s+(that|it|the|its)\b)/gi, "alleges");
 text = text.replace(/\bhuman action simulation\b/gi, "human behavior simulation");
 
 const lines = text.replace(/\r\n/g, "\n").split("\n");
-const URL_RE = /https?:\/\/[^\s)\]）」”'"，。；、！？]+/gi;
+const URL_RE = /!\[[^\]]*\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)\]）」”'"，。；、！？]+/gi;
 // 数字 token：任何含数字的连续片段（$178.67、4.5%、1,205、ml.g5.8xlarge、GPT-4、2026-11-15、B2B 全部命中）
 const NUM_RE = /[\w$€£¥%.,+-]*\d[\w$€£¥%.,+-]*/g;
 // 量级词整组：$13 billion / 44.1 million / 2.3 trillion —— 数字+量级词必须一起占位（SCALE{X}），
@@ -79,6 +79,7 @@ const scaleRestore = (cur, num, unit, word) => {
 
 // 1) URL/数字/人名 → 占位符（按行独立编号；PERSON[A-Z] 给 URL/人名，NUM[A-Z] 给数字）
 // URL 必须占位：实测腾讯会把 markdown 链接里的 https:// 全角化成 https：//（2026-11-13）；
+// markdown 图片 ![alt](url) 必须整体占位：实测整行送翻时腾讯把孤立的 ! 转成全角 ！，图片语法被破坏（2026-11-15）。
 // 数字必须占位：实测腾讯会丢千分位大数、吞美元符、把 percent 错位（2026-11-15，AWS 篇基线丢 21 个数字）。
 const guarded = [], bags = [], fenceFlag = [];
 // 占位字母池避开 B：NUMB 恰是英文真词 numb，引擎会把它当词汇改写（实测 NUMB→$NUMBER，
@@ -90,11 +91,26 @@ for (const l of lines) {
   if (/^\s*```/.test(l)) { inFence = !inFence; fenceFlag.push(true); guarded.push(l); bags.push(null); continue; }
   if (inFence) { fenceFlag.push(true); guarded.push(l); bags.push(null); continue; }   // 代码围栏内不翻
   fenceFlag.push(false);
-  if (!l.trim() || /[\u4e00-\u9fff]/.test(l)) { guarded.push(l); bags.push(null); continue; }
+  if (!l.trim()) { guarded.push(l); bags.push(null); continue; }
+
+  // 混合行三态（2026-11-15 加）：旧逻辑「行里含中文就整行不翻」有两个实测坑——
+  // ① 「摘要：In this post...」被整行跳过（前缀中文+英文主体）；② 源 feed 标题本身脏
+  // （"...releasing results密集ly; the Federa"），2 个中文字符导致整行不翻。
+  const zhCount = (l.match(/[\u4e00-\u9fff]/g) || []).length;
+  let line = l, prefix = "", zhGuard = null;
+  const mPre = l.match(/^([\u4e00-\u9fff]{1,8}\s*[：:]\s*)(.+)$/);
+  if (mPre && mPre[2].length >= 30 && (mPre[2].match(/[\u4e00-\u9fff]/g) || []).length === 0) {
+    prefix = mPre[1]; line = mPre[2];                                  // ① 剥中文前缀，只翻英文主体
+  } else if (zhCount > 0 && (zhCount > 3 || l.length < 80)) {
+    guarded.push(l); bags.push(null); continue;                        // 正常中文行：不翻（现状）
+  } else if (zhCount > 0) {
+    zhGuard = true;                                                    // ② 脏行：中文 ≤3 字符 → 中文片段也占位保护
+  }
 
   const bag = { __num: {}, __scale: {} };
+  if (prefix) bag.__prefix = prefix;
   let i = 0, ni = 0;
-  let g = l.replace(URL_RE, (m) => {
+  let g = line.replace(URL_RE, (m) => {
     if (i >= PLIM) return m;                  // 单行占位符超字母池会越界，极端场景放弃保护
     const c = PPOOL[i]; bag[c] = m; i++; return `PERSON${c}`;
   });
@@ -110,6 +126,13 @@ for (const l of lines) {
     if (i >= PLIM) return m;
     const c = PPOOL[i]; bag[c] = NAME_MAP.get(m.toLowerCase()) || m; i++; return `PERSON${c}`;
   });
+  if (zhGuard) {
+    // 脏行里的裸中文片段也占位保护（"…results密集ly; the Federa" 的「密集」必须原样回来）
+    g = g.replace(/[\u4e00-\u9fff]{1,6}/g, (m) => {
+      if (i >= PLIM) return m;
+      const c = PPOOL[i]; bag[c] = m; i++; return `PERSON${c}`;
+    });
+  }
   guarded.push(g); bags.push(bag);
 }
 
@@ -180,7 +203,7 @@ const out = [];
 for (let i = 0; i < lines.length; i++) {
   const src = lines[i];
   if (fenceFlag[i]) { out.push(src); continue; }
-  if (!src.trim() || /[\u4e00-\u9fff]/.test(src)) { out.push(swapNames(src)); continue; }
+  if (!src.trim() || bags[i] == null) { out.push(swapNames(src)); continue; }   // 空行/围栏外/跳过行（bags==null=正常中文行）
   let t = zh[i] == null ? null : String(zh[i]);
   if (t != null) {
     t = fixParens(restoreNames(swapNames(restoreNum(restoreScale(t, bags[i]), bags[i])), bags[i]), bags[i]);   // 先 SCALE 后 NUM 再 swapNames（避免 URL 里的 gates 等子串被换）
@@ -194,6 +217,7 @@ for (let i = 0; i < lines.length; i++) {
       if (/(NUM[A-Za-z]|SCALE[A-Za-z])/.test(t) || !scaleOk(t, bags[i])) t = src;   // 终极兜底：数字还原失败或量级值缺失的行保留原文
     } else t = src;
   }
+  if (bags[i] && bags[i].__prefix) t = bags[i].__prefix + t;   // 剥掉的中文前缀（「摘要：」）拼回
   out.push(t);
 }
 process.stdout.write(out.join("\n"));
