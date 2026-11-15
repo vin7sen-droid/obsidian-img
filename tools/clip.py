@@ -8,7 +8,7 @@
     [[ReadItLater]] [[Article]] → YAML frontmatter → # 标题 → 标签行 → 原文行 → 正文
     IT之家额外抓评论区：加粗条目头 + 正文段落（字号与正文一致，不用标题/引用块）
 """
-import argparse, gzip, hashlib, html as htmllib, json, os, re, shutil, subprocess, sys, time
+import argparse, gzip, hashlib, html as htmllib, json, os, re, shutil, subprocess, sys, time, zlib
 import urllib.request
 import trans
 from datetime import datetime, timedelta
@@ -135,8 +135,18 @@ def fetch(url, referer=None):
         h["X-Requested-With"] = "XMLHttpRequest"
     r = urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=40)
     d = r.read()
-    if r.headers.get("Content-Encoding") == "gzip":
-        d = gzip.decompress(d)
+    # 2026-11-16：原来用 == "gzip" 严格比较，遇到 "GZIP" / "gzip, br" 会漏解压、正文变乱码；顺带支持 deflate
+    enc = (r.headers.get("Content-Encoding") or "").lower()
+    if "gzip" in enc:
+        try:
+            d = gzip.decompress(d)
+        except Exception:
+            pass
+    elif "deflate" in enc:
+        try:
+            d = zlib.decompress(d)
+        except Exception:
+            pass
     return d.decode("utf-8", "replace"), r.geturl()
 
 
@@ -222,12 +232,24 @@ def _host_blocked(src):
     host = m.group(1)
     if host in _HOST_BLOCK:
         return _HOST_BLOCK[host]
+    def _probe(method, timeout=8):
+        req = urllib.request.Request(src, headers={"User-Agent": UA, "Referer": "file:///note.md"})
+        req.get_method = lambda: method
+        try:
+            urllib.request.urlopen(req, timeout=timeout).close()
+            return None
+        except Exception as e:
+            return str(e)
+
+    # 2026-11-16：原来直接用 GET 探一张图（不读 body 但连接与首包都发生了），
+    # 一篇十张图的文章要多付十次下载；改 HEAD，8 秒超时，405 时再回落 GET。
     blocked = False
-    try:
-        urllib.request.urlopen(urllib.request.Request(
-            src, headers={"User-Agent": UA, "Referer": "file:///note.md"}), timeout=15)
-    except Exception as e:
-        blocked = "403" in str(e)
+    err = _probe("HEAD")
+    if err and "403" in err:
+        blocked = True
+    elif err and "405" in err:
+        err2 = _probe("GET")
+        blocked = bool(err2 and "403" in err2)
     _HOST_BLOCK[host] = blocked
     return blocked
 
@@ -476,11 +498,38 @@ def extract_generic(page):
     return to_md("\n".join(ps)) if ps else ""
 
 
+_META_CACHE = {}
+
+
+def _meta_map(page):
+    """一次解析整页的 <meta> 为 dict；兼容属性任意顺序与单双引号。
+
+    2026-11-16 修：原实现只认「name 在前」或「content 在前」× **双引号** 两种写法，
+    用单引号写属性的站点（不少老站/小众站）title/date/author/description 会全部落空，
+    表现为标题落成「未命名」、date 变今天。
+    """
+    hit = _META_CACHE.get(id(page))
+    if hit and hit[0] is page:      # id() 会被复用，必须连同对象本身一起校验
+        return hit[1]
+    d = {}
+    for tag in re.findall(r"<meta\b[^>]*>", page, re.I):
+        mk = re.search(r"""(?:name|property)\s*=\s*(?:"([^"]*)"|'([^']*)')""", tag, re.I | re.S)
+        if not mk:
+            continue
+        k = (mk.group(1) if mk.group(1) is not None else mk.group(2) or "").strip().lower()
+        mc = re.search(r"""content\s*=\s*(?:"([^"]*)"|'([^']*)')""", tag, re.I | re.S)
+        if not k or not mc:
+            continue
+        if k not in d:
+            v = mc.group(1) if mc.group(1) is not None else mc.group(2)
+            d[k] = htmllib.unescape(v).strip()
+    _META_CACHE.clear()
+    _META_CACHE[id(page)] = (page, d)
+    return d
+
+
 def meta(page, name):
-    m = re.search(r'<meta\s+(?:name|property)="%s"\s+content="(.*?)"' % re.escape(name), page, re.I | re.S)
-    if not m:
-        m = re.search(r'<meta\s+content="(.*?)"\s+(?:name|property)="%s"' % re.escape(name), page, re.I | re.S)
-    return htmllib.unescape(m.group(1)).strip() if m else None
+    return _meta_map(page).get((name or "").lower())
 
 
 # ---------- IT之家评论 ----------
@@ -902,8 +951,31 @@ def draft_summary(paras):
                 return s or None
     return None
 
+def safe_name(title):
+    """标题 → 安全文件名。
+
+    2026-11-16 修三处：①HTML 实体未反转义，`&#183;` 曾原样落进文件名
+    （「科莱特 &#183; 克雷斯」这类）；②非法字符替成空格后没压连续空格；
+    ③没有长度上限——/sdcard 是 FUSE，单个文件名上限 255 **字节**，中文 3 字节/字，
+    80 字以上的长标题会直接 OSError，整次剪藏白跑。
+    """
+    t = htmllib.unescape(title or "")
+    t = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", t)
+    t = re.sub(r"\s+", " ", t).strip(" .")
+    if len(t.encode("utf-8")) > 240:
+        buf, acc = [], 0
+        for ch in t:
+            b = len(ch.encode("utf-8"))
+            if acc + b > 240:
+                break
+            buf.append(ch)
+            acc += b
+        t = "".join(buf).rstrip(" .，、；:：")
+    return t or "未命名"
+
+
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
-    name = re.sub(r'[\\/:*?"<>|]', " ", doc["title"]).strip()
+    name = safe_name(doc["title"])
 
     # 2026-11-13 用户定版：元信息进 frontmatter（created/url/author/tags），正文不再有标签行与原文行
     created = doc.get("date") or datetime.now().strftime("%Y-%m-%d")
@@ -937,6 +1009,21 @@ def build(doc, url, tags_line, summary, body, cmts, auto=False):
     return name, "\n".join(parts).rstrip() + "\n"
 
 
+def _read_text(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _write_text(path, text):
+    """写笔记（2026-11-16 统一）：一律 with 语义，写完立即关句柄。
+
+    刻意不做「临时文件 + os.replace」的原子替换——replace 会换 inode，
+    Obsidian 里该笔记的创建时间/排序会跟着变（日报线踩过这个坑）。
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
@@ -954,6 +1041,9 @@ def main():
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
     a = ap.parse_args()
     try:  # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
+        # 2026-11-16：--stdout 是只读路径（精修/核对原文用），不该有推送副作用
+        if a.stdout:
+            raise RuntimeError("stdout mode")
         _gs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh_sync.py")
         if os.path.exists(_gs):
             subprocess.Popen([sys.executable, _gs, "auto", "--quiet"],
@@ -977,7 +1067,7 @@ def main():
         if not cm:
             sys.exit("该页没有评论接口")
         _bk = _backup_or_die(path_f)
-        old = open(path_f, encoding="utf-8").read()
+        old = _read_text(path_f)
         head = old.split("## 评论区")[0].rstrip() if "## 评论区" in old else old.rstrip()
         head = re.sub(r"\n+-{3,}\s*$", "", head).rstrip()
         _mo = re.search(r"## 评论区（(\d+) 条）", old)
@@ -988,24 +1078,24 @@ def main():
             if merged is None:
                 print("评论变少（%d → %d 条）且无新增条目，已保留原文件不覆盖" % (_old_n, _new_n))
                 return
-            open(path_f, "w", encoding="utf-8").write(head + "\n\n---\n\n" + merged + "\n")
+            _write_text(path_f, head + "\n\n---\n\n" + merged + "\n")
             print(path_f)
             print("评论已增量合并：%d → %d 条（新增 %d 条，旧条目全部保留）" % (_old_n, _old_n + add_n, add_n))
             return
         if cm["main"] or cm["extra"]:
-            open(path_f, "w", encoding="utf-8").write(head + "\n\n---\n\n" + comments_section(cm) + "\n")
+            _write_text(path_f, head + "\n\n---\n\n" + comments_section(cm) + "\n")
         elif cm.get("endHint"):
             n = _news_comment_count(cm.get("newsid"))
             if n == 0:
-                open(path_f, "w", encoding="utf-8").write(head + "\n")
+                _write_text(path_f, head + "\n")
                 print("评论已更新：0 条")
                 return
             note = "文章发布时间太久，IT之家 已不再提供该文评论"
             if n:
                 note += "（页面显示 %d 条）" % n
-            open(path_f, "w", encoding="utf-8").write(head + "\n\n---\n\n评论区：" + note + "。\n")
+            _write_text(path_f, head + "\n\n---\n\n评论区：" + note + "。\n")
         else:
-            open(path_f, "w", encoding="utf-8").write(head + "\n")   # 0 条时不留空评论区
+            _write_text(path_f, head + "\n")   # 0 条时不留空评论区
         print(path_f)
         print("评论已更新：" + re.search(r"（(\d+) 条）", comments_section(cm)).group(1) + " 条")
         return
@@ -1028,9 +1118,12 @@ def main():
         pub = strip_tags(m.group(1))
     date = None
     if pub:
-        y, mo, d = pub.split(" ")[0].replace("/", "-").split("-")
-        date = "%s-%02d-%02d" % (y, int(mo), int(d))
-    else:
+        try:
+            y, mo, d = pub.split(" ")[0].replace("/", "-").split("-")
+            date = "%s-%02d-%02d" % (y, int(mo), int(d))
+        except Exception:
+            pub = None            # 2026-11-16：pubtime 格式变了不该让整次剪藏崩，退回 meta 取时间
+    if not date:
         for k in ("article:published_time", "datePublished", "pubdate", "date"):
             v = meta(page, k)
             if v and re.match(r"\d{4}-\d{2}-\d{2}", v):
@@ -1080,8 +1173,10 @@ def main():
             pass
 
     body = extract_ithome(page) if "ithome.com" in final else None
+    cleaned = False          # 该 body 是否已经过 clean_body（见下方 2026-11-16 说明）
     if not body and "v2ex.com" in final:
-        body = extract_v2ex(page)
+        body = extract_v2ex(page)        # extract_v2ex 内部已 clean_body
+        cleaned = bool(body)
     if not body:
         t = extract_trafilatura(page, final) or ""
         g = extract_generic(page) or ""
@@ -1091,7 +1186,11 @@ def main():
         body = tc if len(tc) >= len(gc) * 0.97 else gc
         if not body:
             body = tc or gc
-    body = clean_body(body, title)
+        cleaned = True                   # tc/gc 已是 clean_body 的产物
+    if not cleaned:
+        # 2026-11-16：只有 extract_ithome 的原始 md 需要这一步；双跑取长路径原来会
+        # 对已经清洗过的正文再跑一次全量正则（8 万字的稿子白跑一遍，且二次去重/截断有副作用）
+        body = clean_body(body, title)
     body = fix_hotlinks(body)
 
     # 英文文章不自动翻译：只检测并强制标记待精修，由精修队员译中（2026-11-12 用户决定）
@@ -1109,7 +1208,8 @@ def main():
             tags = [strip_tags(nm.group(2))] if nm else []
     if a.tags:
         tags = a.tags.split()
-    tags_line = " ".join("#" + t.replace(" ", "").lstrip("#") for t in tags[:2] if t.strip())
+    # 2026-11-16：上限从 2 提到 3——标签规则本就是 1-3 个，tags[:2] 会把用户显式给的第三个标签丢掉
+    tags_line = " ".join("#" + t.replace(" ", "").lstrip("#") for t in tags[:3] if t.strip())
     cmts = None
     if not a.no_comments:
         if "ithome.com" in final:
@@ -1148,7 +1248,7 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, name + ".md")
     _bk = _backup_or_die(path)
-    open(path, "w", encoding="utf-8").write(md)
+    _write_text(path, md)
     if not a.local_images:
         # 图片托管到 GitHub（gh-proxy 加速），失败不阻断剪藏
         try:
