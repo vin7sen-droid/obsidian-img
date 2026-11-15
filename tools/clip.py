@@ -889,6 +889,17 @@ def merge_comments(old_md, cmts):
 
 # ---------- 组装 ----------
 
+def draft_summary(paras):
+    """摘要草稿升级（2026-11-16 用户定）：正文前 3 段里第一个含数字的句子——
+    IT之家核心事实句多带数字，队员从「通读自己写」变「核对压缩」；
+    找不到含数字句时返回 None，调用方回落旧行为（首段前两句）。"""
+    for p in paras[:3]:
+        for s in re.findall(r"[^。！？!?]+[。！？!?]?", p):
+            s = s.strip()
+            if len(s) >= 15 and re.search(r"\d", s):
+                return s
+    return None
+
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
     name = re.sub(r'[\\/:*?"<>|]', " ", doc["title"]).strip()
 
@@ -937,7 +948,7 @@ def main():
     ap.add_argument("--stdout", action="store_true", help="只抓取并打印正文，不写文件（精修时安全读取）")
     ap.add_argument("--refresh-comments", action="store_true",
                     help="只重抓评论区并替换已有笔记里的 ## 评论区 段，其余内容不动")
-    ap.add_argument("--summary", default=None, help="1-3 句摘要；缺省用 meta description 截前两句")
+    ap.add_argument("--summary", default=None, help="摘要；缺省取正文前 3 段第一个含数字句（2026-11-16 定），找不到回落首段前两句")
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
     a = ap.parse_args()
     try:  # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
@@ -1114,9 +1125,13 @@ def main():
                  if x.strip() and not x.startswith(("#", "![", "原文："))
                  and not re.fullmatch(r"\[[^\]]*\]\([^)]*\)", x.strip())
                  and not x.strip().startswith(("http://", "https://"))]
-        src = next((p for p in paras if len(p) >= 30), paras[0] if paras else (doc["desc"] or ""))
-        sents = re.findall(r"[^。！？!?]+[。！？!?]?", src)
-        summary = "".join(sents[:2]).strip()
+        draft = draft_summary(paras)
+        if draft:
+            summary = draft
+        else:
+            src = next((p for p in paras if len(p) >= 30), paras[0] if paras else (doc["desc"] or ""))
+            sents = re.findall(r"[^。！？!?]+[。！？!?]?", src)
+            summary = "".join(sents[:2]).strip()
         if len(summary) > 160:
             summary = summary[:157].rstrip("，、；") + "…"
 
