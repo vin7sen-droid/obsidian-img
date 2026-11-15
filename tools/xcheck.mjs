@@ -322,6 +322,10 @@ export function qualityCheck(en, zh) {
   const runs = s.match(ENG_RUN) || [];
   if (runs.some((seg) => FUNC_WORD.test(seg))) return { level: "mid", reason: "英文从句未翻译（疑似站点样板或整句漏译）" };
   if (NEG_EN.test(stripBoiler(en)) && !NEG_ZH.test(s)) return { level: "mid", reason: "原文是否定句，译文没有否定词（疑似翻反）" };
+  // 时间习语反转（2026-11-15 抽查实抓：AI Takeover Could Be Months Away 被两个引擎都译成「几个月后/需要数月」，
+  // 而 away 在新闻语境=「距离现在只剩」；窄规则只盯 「be + 时长 + away」句式）：
+  if (/\b(?:months?|weeks?|days?|years?)\s+away\b/i.test(en) && !/(月|周|天|年)内|就会|即将|临近|只剩|不到|还有|要过/.test(s))
+    return { level: "mid", reason: "「be X away」时间习语：away=只剩X就要发生，译文疑似译成「X后/需要X时间」（方向反了）" };
   return null;
 }
 
