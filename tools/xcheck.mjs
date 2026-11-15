@@ -334,6 +334,35 @@ export function qualityCheck(en, zh) {
   // 而 away 在新闻语境=「距离现在只剩」；窄规则只盯 「be + 时长 + away」句式）：
   if (/\b(?:months?|weeks?|days?|years?)\s+away\b/i.test(en) && !/(月|周|天|年)内|就会|即将|临近|只剩|不到|还有|要过/.test(s))
     return { level: "mid", reason: "「be X away」时间习语：away=只剩X就要发生，译文疑似译成「X后/需要X时间」（方向反了）" };
+  // 截断编造防御（2026-11-15 抽查实抓：源 feed 摘要以省略号截断，腾讯把后半句编造了出来
+  // ——「Threat level: "Companies and policymakers sho…」被补成完整引语）。原文以省略号结尾
+  // （且足够长）时人工核对完整性；词中断型（"the Federa"）无可靠信号不抓。
+  const ent = en.trim();
+  if (ent.length >= 80 && /(\.\.\.|…)$/.test(ent))
+    return { level: "mid", reason: "原文以省略号截断，译文疑似被引擎「补完」（人工核对完整性）" };
+  return null;
+}
+
+// ── 译名一致性检查（2026-11-15 加）：引擎自由音译会产出与规范译名不一致的异体
+// （实测：Dario Amodei 一文里「阿莫代伊/阿莫迪」混用、Huang→「黄光裕/胡锦涛」）。
+// 表驱动：原文含该实体 + 译文含已知坏译名才报（避免真央行/真黄光裕新闻误报）。纯本地零请求。
+const ALIAS_BAD = [
+  { bad: "阿莫代伊", good: "达里奥·阿莫迪", enRe: /amodei/i },
+  { bad: "黄光裕", good: "黄仁勋", enRe: /huang(?!s?\s*(?:guangyu|gon?g?yu))/i },  // 真黄光裕（Huang Guangyu）新闻不误报
+  { bad: "胡锦涛", good: "黄仁勋", enRe: /huang/i },
+  { bad: "詹森黄", good: "黄仁勋", enRe: /jensen|huang/i },
+  { bad: "奥尔特曼", good: "萨姆·奥特曼", enRe: /altman/i },
+  { bad: "丽莎苏", good: "苏姿丰", enRe: /lisa\s+su/i },
+  { bad: "纳斯达克通用汽车", good: "NasdaqGM（纳斯达克全球精选市场）", enRe: /nasdaq/i },
+  { bad: "敏捷机器人", good: "思灵机器人（Agile Robots）", enRe: /agile\s+robots/i },
+  { bad: "中国人民银行", good: "Anthropic PBC（公益公司，非央行）", enRe: /anthropic/i },
+];
+export function aliasCheck(en, zh) {
+  const s = String(zh || "");
+  if (!s.trim()) return null;
+  for (const a of ALIAS_BAD)
+    if (a.enRe.test(en) && s.includes(a.bad))
+      return { level: "mid", reason: `译名异常：「${a.bad}」应为「${a.good}」（与全文规范译名统一）` };
   return null;
 }
 
@@ -432,7 +461,7 @@ export async function crossCheck(res, opts = {}) {
   let checked = 0, skipped = 0;
   // 本地质检先过一遍：不依赖引擎，因此连第二引擎没覆盖的对也能查
   for (const p of pairs) {
-    const q = qualityCheck(p.en, p.zh) || keywordCheck(p.en, p.zh, KW_NAME_ENTRIES);
+    const q = qualityCheck(p.en, p.zh) || keywordCheck(p.en, p.zh, KW_NAME_ENTRIES) || aliasCheck(p.en, p.zh);
     if (q) flagged.push({ ...p, kind: p.kind, level: q.level, reason: q.reason });
   }
   for (const p of pairs) {
