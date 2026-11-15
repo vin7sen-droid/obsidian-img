@@ -401,10 +401,13 @@ export async function crossCheck(res, opts = {}) {
     thirdVote.push(f);
   }
   if (mmBatch.length) {
-    const ctx2 = { ...ctx, mmSample: mmBatch.length, mmWorkers: 3, deadline: Date.now() + 60000 };
+    // 干净 ctx：不继承主链的 limited/consec/failed（主链熔断不该连坐第三票），60s 独立死线
+    const ctx2 = { conc: 3, failBudget: 8, failed: 0, consec: 0, limited: false,
+      mmSample: mmBatch.length, mmWorkers: 3, de: ctx.de, deadline: Date.now() + 60000 };
     try {
       await fillMyMemory(mmBatch, ctx2);
       thirdVote.forEach((f, i) => { if (mmBatch[i] && mmBatch[i].g) f.mm = mmBatch[i].g; });
+      saveCache();  // 第三票结果落盘（否则 crossCheck 返回后 cacheDirty 丢失，下次重花请求）
     } catch { /* 第三票尽力而为 */ }
   }
   return { checked, skipped, failed: failures, limited, engine: chain.join("+"), de: ctx.de || null, flagged };
