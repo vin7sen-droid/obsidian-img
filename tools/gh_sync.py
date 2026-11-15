@@ -35,7 +35,7 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
          "refresh_all_comments.py", "gh_sync.py", "update_check_template.md",
          "@weibo_dl.py", "@douyin_dl.py",
          "@social_dl.py", "@ins_export/ins_dl.py", "@ins_export/selfupdate.py",
-         "mm.mjs", "zh.mjs", "numcheck.py", "radar_spotcheck.py", "xcheck.mjs",
+         "mm.mjs", "zh.mjs", "numcheck.py", "summary_check.py", "radar_spotcheck.py", "xcheck.mjs",
          "translate.mjs", "name-guard.mjs", "names-extra.json"]
 # 边界护栏：下载器只允许以 @ 前缀（workspace 根）引用；裸 *_dl.py = 误放 tools/，拒绝
 _BAD = [f for f in FILES if f.endswith("_dl.py") and not f.startswith("@")]
