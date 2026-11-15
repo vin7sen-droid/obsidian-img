@@ -44,7 +44,7 @@ const EN_MEASURE = {
   gb: 1e9, mb: 1e6, kb: 1e3, tb: 1e12,
 };
 const EN_UNIT = { ...EN_SCALE, ...EN_MEASURE };
-const ZH_SCALE = { 万亿: 1e12, 十亿: 1e9, 亿: 1e8, 千万: 1e7, 百万: 1e6, 万: 1e4, 千: 1e3, 百: 1e2 };
+const ZH_SCALE = { 万亿: 1e12, 十亿: 1e9, 亿: 1e8, 千万: 1e7, 百万: 1e6, 万: 1e4, 千: 1e3, 百: 1e2, 萬億: 1e12, 億: 1e8, 萬: 1e4 };  // 繁体：台媒 iThome 台/TechNews 源内容
 const ZH_MEASURE = { 万千瓦: 1e7, 吉瓦: 1e9, 兆瓦: 1e6, 千瓦: 1e3, 瓦: 1 };
 const ZH_UNIT = { ...ZH_SCALE, ...ZH_MEASURE };
 // 中文数字（用于「四大实验室」「第三季度」这类英文数字被译成汉字的情形）
@@ -65,8 +65,10 @@ function norm(s) {
 // 英文原文数字：数字 + 紧跟单位词（允许空白）→ si 值；无单位数字（日期/序号/百分比）si=数值本身
 export function parseNums(text) {
   const out = [];
+  // 连字符隔断量级词归一（2026-11-16 审查实抓："30-billion deal"/"1.6-trillion-parameter" 被解析成裸 30/1.6 未乘量级）
+  let s = norm(text).replace(/(\d(?:\.\d+)?)[-\u2010-\u2015](trillion|billion|million|thousand|hundred|crore|lakh)\b/gi, "$1 $2");
   // 年代词两边写法天然不同（2010s ↔ 21世纪10年代），剥掉不参与数字比对
-  const s = norm(text).replace(/\b(19|20)\d0s\b/gi, " ").replace(/\d{1,2}\s*世纪\s*\d{1,2}\s*年代|\d{4}\s*年代/g, " ");
+  s = s.replace(/\b(19|20)\d0s\b/gi, " ").replace(/\d{1,2}\s*世纪\s*\d{1,2}\s*年代|\d{4}\s*年代/g, " ");
   const re = new RegExp(
     "(" + NUM + ")\\s*(lakh\\s*crore|crore|lakh|trillion|billion|million|thousand|hundred|gigawatts?|megawatts?|kilowatts?|bn|mn|tn|gw|mw|kw|ghz|mhz|khz|gb|mb|kb|tb|[kmbt])(?![a-z0-9])",
     "gi"
@@ -99,7 +101,7 @@ export function parseZhNums(text) {
   // 中文单位 + 拉丁单位都认（腾讯常把 27B 写成「27 B」、5.46M 写成「5.46 M」、4T 写成「4 T」），
   // 并允许「30多亿」「约 3 亿」这类量词插入（多/余/几/左右）。
   const re = new RegExp(
-    "(" + NUM + "|[一二两三四五六七八九十])\\s*(?:多|余|几|左右)?\\s*(万千瓦|万亿|十亿|千万|百万|亿|万|千|百|吉瓦|兆瓦|千瓦|瓦|%|℃|lakh\\s*crore|crore|lakh|trillion|billion|million|thousand|hundred|gigawatts?|megawatts?|kilowatts?|bn|mn|tn|gw|mw|kw|ghz|mhz|khz|gb|mb|kb|tb|[kmbt](?![A-Za-z0-9]))?",
+    "(" + NUM + "|[一二两三四五六七八九十])\\s*(?:多|余|几|左右)?\\s*(万千瓦|万亿|萬億|十亿|千万|百万|亿|億|万|千|百|萬|吉瓦|兆瓦|千瓦|瓦|%|℃|lakh\\s*crore|crore|lakh|trillion|billion|million|thousand|hundred|gigawatts?|megawatts?|kilowatts?|bn|mn|tn|gw|mw|kw|ghz|mhz|khz|gb|mb|kb|tb|[kmbt](?![A-Za-z0-9]))?",
     "gi"
   );
   let m;
@@ -460,6 +462,7 @@ export async function crossCheck(res, opts = {}) {
     : engine === "caiyun" ? ["caiyun", "mymemory"]
     : [engine];
   for (const eng of chain) {
+    ctx.consec = 0;                          // 切引擎重置连败计数：上一引擎的失败不该连坐下一引擎的熔断预算
     if (eng === "google") await fillGoogle(pairs, ctx);
     else if (eng === "mymemory") await fillMyMemory(pairs, ctx);
     else await fillCaiyun(pairs, ctx);
@@ -494,7 +497,7 @@ export async function crossCheck(res, opts = {}) {
   const thirdVote = [];
   const mmBatch = [];
   for (const f of flagged) {
-    if (/\d/.test(f.reason) || /数字|单位/.test(f.reason)) continue;
+    if (/数字|单位|长度比/.test(f.reason)) continue;   // 数字/单位类不送（mm 的 TM 数字不可靠）；长度比类送（mm 正常长度译文可当对照）
     mmBatch.push({ en: f.en });
     thirdVote.push(f);
   }
@@ -567,9 +570,9 @@ export function writeReviewList(dir, stamp, flagged, meta = {}) {
     "",
     "> 腾讯机翻 vs 第二通道（" + (ENGINE_ZH[meta.engine] || "彩云小译") + "）交叉校验 + 本地质检（英文残留/否定词/时间习语）筛出的差异条目，**终审归人工**：核对原文后直接改日报 md（主文件 + 速览），改完本清单可删。",
     "> 非数字类分歧已自动补 **MyMemory 第三票**（腾讯✗彩云✗时它常能翻对习语），三票对照着看；数字类分歧不送 MyMemory（其 TM 语料数字不可靠）。",
-    meta.checked ? "> 校验范围：" + meta.checked + " 条已译文本（第二通道未返回 " + (meta.skipped || 0) + " 条，未参与比对）。" : "",
     "",
   ];
+  if (meta.checked) lines.splice(3, 0, "> 校验范围：" + meta.checked + " 条已译文本（第二通道未返回 " + (meta.skipped || 0) + " 条，未参与比对）。");
   const order = { high: 0, mid: 1 };
   flagged.sort((a, b) => order[a.level] - order[b.level]);
   flagged.forEach((f, i) => {
@@ -588,6 +591,6 @@ export function writeReviewList(dir, stamp, flagged, meta = {}) {
     }
     lines.push("");
   });
-  fs.writeFileSync(p, lines.filter((l) => l !== "").join("\n"), "utf-8");
+  fs.writeFileSync(p, lines.join("\n"), "utf-8");
   return p;
 }
