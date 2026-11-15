@@ -1,130 +1,187 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""摘要数字校验（2026-11-16 定，精修收尾自查用；2026-11-16 借鉴热评会话定版：清单制 + SI 归一）
+# 摘要数字机检（摘要 vs raw 原文 title+desc 同事件对比）——只出清单不当阻断闸
+# 用法: python3 summary_check.py <workdir> [date]
+# 输入: <workdir>/merged.json 优先（{"merged":[...]} 或 [...]），无则合并 json/T*.json；raw_<date>.json 按 url 建索引
+# 基准: 每条按 url 回 raw 取原始 title+desc（merged title 是队员改写版会丢/改数字，不作依据）
+# 输出: <workdir>/summary_人工审.md + stdout 统计；exit 恒 0（清单制）
+# SI 归一复用 xcheck.mjs 的 parseNums/parseZhNums/close（node 子进程批量跑）
+import json, sys, os, glob, re, subprocess
 
-用法：
-  python3 tools/summary_check.py "<笔记路径>" [更多路径...]
+ARGS = sys.argv[1:]
+MODE = "md" if ARGS and ARGS[0] == "--md" else "workdir"   # md=剪藏笔记「摘要：」行 vs 同文件正文；workdir=日报 items 摘要 vs raw.json 原文
+if MODE == "md":
+    ARGS = ARGS[1:]
+WORK = ARGS[0] if ARGS else "."
+DATE = sys.argv[2] if len(sys.argv) > 2 else None
+XC   = "/root/workspace/tools/xcheck.mjs"
 
-规则：笔记「摘要：」行里的数字必须能在正文（除摘要行外的全文，含 H1/评论区标题）找到——
-防「摘要写了个正文没有的数」与 over six million→精确数 式合理化编造。
+def load_items():
+    p = os.path.join(WORK, "merged.json")
+    if os.path.exists(p):
+        d = json.load(open(p))
+        if isinstance(d, list): return d
+        if isinstance(d, dict):
+            for v in d.values():
+                if isinstance(v, list): return v
+        return []
+    items = []
+    for f in sorted(glob.glob(os.path.join(WORK, "json", "T*.json"))):
+        items += json.load(open(f)).get("items", [])
+    return items
 
-定位（借鉴定案）：**只出清单，不当阻断闸**——摘要是作者改写，允许引入正文没有的
-背景数或把约数改写成精确数；flag 由人 30 秒过一遍：编造/换算错 → 修；
-约数改写 / 补背景 / SI 换算 → 放行。阻断式只适合译文（xcheck 管那层）。
+def raw_index():
+    cands = ([os.path.join(WORK, "raw_%s.json" % DATE)] if DATE else []) + \
+            sorted(glob.glob(os.path.join(WORK, "raw_*.json")), reverse=True)
+    idx = {}
+    for f in cands:
+        if not os.path.exists(f): continue
+        for e in json.load(open(f)):
+            u = e.get("url") or ""
+            if u and u not in idx:
+                idx[u] = {"title": e.get("title",""), "desc": (e.get("desc") or "").strip()}
+    return idx
 
-SI 归一（只对**带量级单位**的 token 做）：摘要「130 亿」↔ 正文「$13 billion」、
-「40000 亿」↔「4 万亿」是合法换算，自动放行（万=1e4 亿=1e8 万亿=1e12
-B/billion=1e9 M/million=1e6 k/thousand=1e3）。裸数字（无单位）不做 SI 跨比——
-量级在单位里，裸值相等不代表语义相等（摘要「4 亿美元」≠ 正文「第 4 页」的 4）。
-千分位归一（72,000==72000）；单位前缀放行（摘要「100 毫秒」↔ 正文「100ms」）。
+NODE = r'''
+const { parseNums, parseZhNums } = await import("file:///root/workspace/tools/xcheck.mjs");
+let input = ""; process.stdin.on("data", d => input += d);
+process.stdin.on("end", () => {
+  const pairs = JSON.parse(input);
+  const close = (a, b) => {
+    if (!isFinite(a) || !isFinite(b)) return false;
+    const d = Math.abs(a - b), s = Math.max(Math.abs(a), Math.abs(b), 1);
+    return d / s < 0.02 || d < 1e-6;
+  };
+  // 长度单位预归一成毫米裸数（英寸 25.4 / 英尺 304.8 / 英里 1609344 / 厘米 10 / 毫米 1）
+  const LENMAP = {};
+  const MM = { "寸":25.4, '"':25.4, '″':25.4, "英寸":25.4, "吋":25.4, "inch":25.4, "inches":25.4, "英尺":304.8, "feet":304.8,
+               "foot":304.8, "英里":1609344, "miles":1609344, "mile":1609344,
+               "厘米":10, "cm":10, "毫米":1, "mm":1 };
+  const W2N = {one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+  const clean = t => String(t||"")
+    .replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\b/gi, w => " " + W2N[w.toLowerCase()] + " ")
+    .replace(/https?:\/\/[^\s)\]]+/g, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/(\d[\d,]*(?:\.\d+)?)\s*(英寸|吋|寸|inch(?:es)?|"|″|英尺|feet|foot|英里|miles?|厘米|cm|毫米|mm)(?![a-zA-Z\u4e00-\u9fff])/gi,
+             (m, n, u) => { const v = parseFloat(n.replace(/,/g,"")) * (MM[u.toLowerCase()] ?? MM[u]);
+                            if (!isFinite(v)) return m;
+                            const key = String(Math.round(v*100)/100);
+                            LENMAP[key] = m.trim();   // 反查表：170.18 → 「6.7"」
+                            return " " + key + " "; })
+    .replace(/\b[xX](86|64)\b/g, " ")              // 架构名 x86/x64
+    .replace(/\b[A-Z]{1,3}\d{2,}\b/g, " ")          // 型号 QN10 / KB5132057 / A100
+    .replace(/二次开发|二进制|二合一/g, " ")            // 中文习语数字
+    ;
+  const out = pairs.map(p => {
+    // 摘要里每个数字都要能在 raw title+desc 里找到对应（摘要数字 ⊆ 素材数字）
+    // 双方都纯数才比数值；任一带单位则比 SI（防「18亿」靠裸 18 冒充 18 crore）
+    const S = parseZhNums(clean(p.summary));
+    const bases = p.bases.map(d => p.desc_is_zh ? parseZhNums(clean(d))
+                                                : [...parseNums(clean(d)), ...parseZhNums(clean(d))]);
+    const flags = [];
+    for (const s of S) {
+      const hit = bases.some(B => B.some(t =>
+        (s.si === s.n) ? (!t.unit && close(s.n, t.n)) : (t.unit && close(s.si, t.si))));
+      if (!hit) flags.push(String(s.n));
+    }
+    return { title: p.title, total: S.length, flags: flags.map(f => LENMAP[f] || f),
+             bases_n: p.bases.length, missing: p.missing };
+  });
+  console.log(JSON.stringify(out));
+});
+'''
 
-输出：每篇一行 OK / CHECK（flag 数字列出，附摘要写法）；有 flag 时退出码 1（提醒核对，非阻断）。
-"""
-import re, sys, glob
+def node_check(pairs):
+    r = subprocess.run(["node", "--input-type=module", "-e", NODE],
+                       input=json.dumps(pairs, ensure_ascii=False),
+                       capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        sys.stderr.write(r.stderr[-2000:]); sys.exit(1)
+    return json.loads(r.stdout)
 
-NUM_RE = re.compile(r"[\w$€£¥%.,+-]*\d[\w$€£¥%.,+-]*")
-
-# 「数字 空格 量级词」粘连——中文习惯「267400 亿元」「4 万亿」带空格会把量级词从 token 里断开，
-# SI 归一就失效了；比对前先把量级词粘回数字（只粘白名单量级词，不动其他文本）。
-GLUE_RE = re.compile(r"(\d)\s+((?:万亿|亿|万)(?![\dA-Za-z])|billion|million|thousand)", re.IGNORECASE)
-
-
-def _glue(text):
-    return GLUE_RE.sub(r"\1\2", text)
-
-SI_UNITS = [("万亿", 1e12), ("billion", 1e9), ("B", 1e9), ("亿", 1e8),
-            ("million", 1e6), ("M", 1e6), ("万", 1e4), ("thousand", 1e3),
-            ("K", 1e3), ("k", 1e3)]
-
-
-def si_scaled(tok):
-    """(绝对值, 是否带量级单位)。13B→(1.3e10,True)、130亿→(1.3e10,True)、12345→(12345,False)、
-    100ms→(None,False)（非量级单位不定值）。"""
-    t = tok.replace(",", "").strip(".,+-")
-    m = re.match(r"^[$€£¥₹]?\s*(\d+(?:\.\d+)?)\s*(.*)$", t)
-    if not m:
-        return None, False
-    num, unit = float(m.group(1)), m.group(2)
-    if unit in ("", "%"):
-        return num, False
-    for u, mult in SI_UNITS:
-        if unit.startswith(u):
-            return num * mult, True
-    return None, False
-
-
-def norm_tokens(text):
-    """(token集合, 数字段→所属raw映射)。token 里的连续数字段也单独入集合
-    （防 Sub-100ms / 100ms 这类形态挡住摘要的裸数字）；映射供 SI 二级判定——
-    数字段「40000」借完整 token「40000亿美元」的量级语义。"""
-    out, seg = set(), {}
-    for t in NUM_RE.findall(text):
-        t = t.replace(",", "").strip(".,+-")
-        if not t:
+def check_md(paths):
+    """--md 模式：每个路径抽「摘要：」行 vs 其余全文（正文剥图片行/表格/URL/代码围栏/frontmatter），
+    SI 归一比对（复用 node_check 单对通道，bases=正文）。返回 [{note,total,flags}]。"""
+    import re as _re
+    rows = []
+    for path in paths:
+        text = open(path, encoding="utf-8").read()
+        lines = text.split("\n")
+        summ = None
+        keep = []
+        for ln in lines:
+            s2 = ln.strip()
+            if summ is None and s2.startswith(("摘要：", "摘要:")):
+                summ = s2[3:].strip(); continue
+            keep.append(ln)
+        if not summ:
+            rows.append({"note": os.path.basename(path), "total": 0, "flags": [], "skip": "no 摘要行"})
             continue
-        out.add(t)
-        seg[t] = t
-        for d in re.findall(r"\d+", t):
-            out.add(d)
-            seg.setdefault(d, t)
-    return out, seg
-
-
-def check(path):
-    t = open(path, encoding="utf-8").read()
-    lines = t.split("\n")
-    # frontmatter 之后找摘要行
-    fm_end = 0
-    if lines and lines[0].strip() == "---":
-        for i in range(1, len(lines)):
-            if lines[i].strip() == "---":
-                fm_end = i + 1
-                break
-    sm_i = next((i for i in range(fm_end, len(lines)) if lines[i].startswith("摘要：")), None)
-    if sm_i is None:
-        return None, "无摘要行"
-    # 参照集 = 除摘要行外的全文（H1/正文/评论区标题与内容——「37 条评论」这类摘要数字
-    # 合法来源在评论区标题，H1 也常带数字；图片 URL 的 hex 只造成假放行不造成假缺失）
-    summary = _glue(lines[sm_i][len("摘要："):])
-    body = _glue("\n".join(lines[fm_end:sm_i] + lines[sm_i + 1 :]))
-    body_toks, _ = norm_tokens(body)
-    body_si = {si_scaled(b)[0] for b in body_toks if si_scaled(b)[1] and si_scaled(b)[0] is not None}
-    sum_toks, sum_seg = norm_tokens(summary)
-    # 摘要数字命中正文其一即可：①token 直命中；②正文 token 带纯字母单位后缀（100↔100ms）；
-    # ③所属完整 token 带量级单位且 SI 等值（130 亿 ↔ $13 billion、40000 亿 ↔ 4 万亿）
-    missing = []
-    for x in sorted(sum_toks, key=lambda x: (len(x), x)):
-        if x in body_toks:
+        body_lines, in_code, in_fm = [], False, False
+        for ln in keep:
+            st = ln.strip()
+            if st == "---" and not body_lines and not in_code:
+                in_fm = not in_fm; continue
+            if in_fm:
+                if ln.startswith(("created:", "source:", "published:", "author:", "title:", "tags:", "description:")): continue
+                else: in_fm = False
+            if st.startswith("```"): in_code = not in_code; continue
+            if in_code or _re.match(r"^\s*(!\[|\|)", ln): continue
+            ln = _re.sub(r"https?://\S+", " LINK ", ln)
+            ln = _re.sub(r"\[[^\]]*\]\([^)]*\)", " LINK ", ln)
+            body_lines.append(ln)
+        body = "\n".join(body_lines)
+        if not _re.search(r"\d", summ):
+            rows.append({"note": os.path.basename(path), "total": 0, "flags": [], "skip": "摘要无数字"})
             continue
-        if any(g.startswith(x) and g[len(x):].isalpha() for g in body_toks):
-            continue
-        raw = sum_seg.get(x, x)
-        v, scaled = si_scaled(raw)
-        if scaled and v is not None and v in body_si:
-            continue
-        missing.append((x, raw))
-    return missing, summary[:50]
+        pairs = [{"title": os.path.basename(path), "summary": summ, "bases": [body], "desc_is_zh": False, "missing": []}]
+        r = node_check(pairs)[0]
+        r["note"] = os.path.basename(path)
+        rows.append(r)
+    return rows
 
 
 def main():
-    if len(sys.argv) < 2:
-        sys.exit(__doc__)
-    flags = 0
-    for pat in sys.argv[1:]:
-        for p in (glob.glob(pat) if any(c in pat for c in "*?[") else [pat]):
-            missing, info = check(p)
-            if missing is None:
-                print("SKIP   %s（%s）" % (p, info))
-            elif not missing:
-                print("OK     %s" % p)
-            else:
-                flags += 1
-                print("CHECK  %s" % p)
-                toks = "、".join(x if x == raw else "%s（摘要写法：%s）" % (x, raw) for x, raw in missing)
-                print("       摘要数字待人工核对：%s ｜ 摘要首 50 字：%s" % (toks, info))
-                print("       判读：编造/换算错→必须修；约数改写、补背景数、SI 换算→放行（清单制，非阻断）")
-    sys.exit(1 if flags else 0)
-
+    if MODE == "md":
+        rows = check_md(ARGS)
+        flagged = [r for r in rows if r["flags"]]
+        out = ["# 摘要数字机检（笔记）· 清单（只提示不阻断）", "",
+               "> %d 篇参检 / **flagged %d**" % (len(rows), len(flagged)), ""]
+        for r in rows:
+            if r["flags"]:
+                out.append("- **%s** — 摘要数字 %s 在正文无对应；先判「约数合理化/背景数」，确实无据再修。30 秒人工判。" % (r["note"], r["flags"]))
+        if not flagged: out.append("（无 flag，摘要数字全部在正文可对应）")
+        out_dir = os.path.dirname(os.path.abspath(ARGS[-1]))
+        path = os.path.join(out_dir, "summary_人工审.md")
+        open(path, "w").write("\n".join(out) + "\n")
+        print("摘要数字机检(笔记): %d 篇 / flagged %d → %s" % (len(rows), len(flagged), path))
+        return
+    items = load_items(); idx = raw_index()
+    pairs, skipped = [], 0
+    for it in items:
+        zh_src = bool(re.search(r"[\u4e00-\u9fff]", it.get("title","")))
+        if not re.search(r"\d", it.get("summary","")): skipped += 1; continue
+        # 基准=raw 原始 title+desc；source url 不在 raw 的记 miss（如抓取后追加的新源）
+        bases, missing = [], []
+        for u in [it.get("url","")] + [s.get("url","") for s in it.get("sources", [])]:
+            if not u: continue
+            r = idx.get(u)
+            if r: bases += [r["title"], r["desc"]]
+            elif u not in missing: missing.append(u)
+        if not bases: skipped += 1; continue
+        pairs.append({"title": it.get("title",""), "summary": it.get("summary",""),
+                      "bases": bases, "desc_is_zh": zh_src, "missing": missing})
+    res = node_check(pairs)
+    flagged = [r for r in res if r["flags"]]
+    out = ["# 摘要数字机检 · 人工审清单（只提示不阻断）", "",
+           "> %d 条参检 / %d 条跳过（无 raw 原文或摘要无数字）/ **flagged %d**" % (len(res), skipped, len(flagged)), ""]
+    for r in flagged:
+        note = "；⚠️ 源 desc 不在 raw（抓取后追加的新源），无法对照" if r.get("missing") else ""
+        out.append("- **%s** — 摘要数字 %s（共 %d 个数字）在 %d 个来源（raw title+desc）中无对应%s；先判「补背景数/约数合理化/跨币种换算」，确实无据再修。" % (
+            r["title"], r["flags"], r["total"], r["bases_n"], note))
+    if not flagged: out.append("（无 flag，全部数字在来源原文中可对应）")
+    out_dir = WORK if MODE == "workdir" else os.path.dirname(os.path.abspath(ARGS[-1]))
+    path = os.path.join(out_dir, "summary_人工审.md")
+    open(path, "w").write("\n".join(out) + "\n")
+    print("摘要数字机检: 参检 %d / 跳过 %d / flagged %d → %s" % (len(res), skipped, len(flagged), path))
 
 if __name__ == "__main__":
     main()
