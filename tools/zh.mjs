@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// 通用英译中 CLI —— 复用 dsh-ai-research 雷达的翻译通道（腾讯 Transmart + 专名保护 + 共享缓存）
+// 通用英译中 CLI —— 复用雷达翻译通道（腾讯 Transmart + 专名保护 + 共享缓存）
+// 真源模块：/root/workspace/tools/{translate.mjs, name-guard.mjs}（2026-11-15 从插件目录迁出）
 //
 // 用法：
 //   node /root/workspace/tools/zh.mjs "OpenAI ships a new model"
