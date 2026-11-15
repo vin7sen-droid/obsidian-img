@@ -63,10 +63,11 @@ if (!EMAIL) console.error("提示：未找到邮箱（~/.dsh-ai-research/mm-emai
 
 let cache = {};
 try { cache = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")); } catch { cache = {}; }
-if (refreshArg >= 0) { delete cache[slug(text)]; console.error("[mymemory] --refresh：已清除该句缓存，强制重翻"); }
 
 const isChinese = (s) => /[\u4e00-\u9fff]/.test(s);
 const slug = (s) => s.replace(/\s+/g, " ").trim();
+
+if (refreshArg >= 0) { delete cache[slug(text)]; console.error("[mymemory] --refresh：已清除该句缓存，强制重翻"); }
 
 let usedChars = 0;
 let hitCache = 0;
@@ -126,8 +127,15 @@ const out = lines.map((l) => {
 });
 
 try {
+  // 2026-11-15 并发安全：写前重读磁盘合并（内存优先），临时名带 pid。
+  // MyMemory 额度稀缺，别的进程刚翻的条目不能被这次写回抹掉。
   fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-  fs.writeFileSync(CACHE_FILE, JSON.stringify(cache));
+  let disk = {};
+  try { disk = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")) || {}; } catch {}
+  const merged = Object.assign({}, disk, cache);
+  const tmp = `${CACHE_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(merged));
+  fs.renameSync(tmp, CACHE_FILE);
 } catch (e) { console.error("缓存写入失败：", e.message); }
 
 process.stdout.write(out.join("\n") + (text.endsWith("\n") || fromArgv ? "\n" : ""));
