@@ -4,77 +4,145 @@
 //
 // 用法：
 //   node /root/workspace/tools/zh.mjs "OpenAI ships a new model"
-//   node /root/workspace/tools/zh.mjs -f article.txt > article.zh.txt
+//   node /root/workspace/tools/zh.mjs -f article.txt [-o article.zh.txt]
 //   cat lines.txt | node /root/workspace/tools/zh.mjs
+//   node /root/workspace/tools/zh.mjs --fresh -f article.txt      # 不读/不写共享缓存（重测可疑译文）
 //
 // 行为：逐行翻译，空行原样保留，已有的中文行原样输出（不翻译）；翻译失败的行原样输出。
 // 缓存：~/.dsh-ai-research/translate-cache.json（与雷达共用，重复文本零请求）。
+//   ⚠️ 缓存 key=原文：TM 错译会一直命中，重测可疑译文必须 --fresh（否则只会拿到同一个错译）。
 //
 // 2026-11-15 三项增强（AWS SageMaker 篇实测，数字错译 51→7 处且零数值错误，见 /root/workspace/tests/REPORT.md）：
 //   ① 数字/型号 token 占位（NUMA…NUMZ）——价格、百分比、千分位、版本号、实例型号完全不过引擎
 //   ② markdown 代码围栏（```）内整段跳过翻译
 //   ③ 行数守恒——非空输入行必须得到非空译文，否则单行重翻兜底
+//
+// 2026-11-16 七项优化：
+//   ① 修 fence 污染 bug：falls/ships/teases/exec/claims 的引擎怪癖归一原先在切行前对全文 replace，
+//      代码围栏内的文本会被改写并原样输出 → 改为逐行、仅对送翻行做
+//   ② SCALE_RE 补 lakh / crore / lakh crore / thousand 与 ₹ / Rs（印度东南亚稿），不再把量级词留给引擎乱译
+//   ③ 量级换算统一走 SI：1300 billion 现在输出「1.3万亿」而不是「13000亿」
+//   ④ 删死代码：bag.__scale / restoreScale / numOk 的 needS（SCALE 实际写在 bag.__num 的 ["__SCALE__",…]）
+//   ⑤ --fresh / --no-cache：缓存指到临时目录（必须在 import translate.mjs 之前设 env）
+//   ⑥ -o/--out 落文件、--help
+//   ⑦ 整批全失败快速失败：引擎挂了不再逐行 2 次重翻 + 800ms 退避
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const MOD = "/root/workspace/tools/translate.mjs";
 const GUARD = "/root/workspace/tools/name-guard.mjs";
+
+// ---------- 参数 ----------
+const argv = process.argv.slice(2);
+const hasFlag = (...names) => names.some((n) => argv.includes(n));
+const optValue = (name) => {
+  const i = argv.indexOf(name);
+  return i >= 0 && i + 1 < argv.length ? argv[i + 1] : null;
+};
+
+if (hasFlag("-h", "--help")) {
+  process.stdout.write(`用法：
+  zh.mjs "文本"                         翻译一段文本
+  zh.mjs -f <文件> [-o <输出文件>]       翻译文件
+  cat lines.txt | zh.mjs                翻译 stdin
+选项：
+  -f, --file <路径>   从文件读入
+  -o, --out <路径>    写到文件（缺省 stdout）
+  --fresh, --no-cache 不读不写共享缓存（重测可疑/坏译时用）
+  -h, --help          显示本帮助
+环境：
+  ZH_VERBOSE=1        打印进度到 stderr
+  DSH_AI_RESEARCH_CACHE  缓存目录（默认 ~/.dsh-ai-research）
+`);
+  process.exit(0);
+}
+
+// --fresh 必须在 import translate.mjs 之前生效：CACHE_DIR 是模块顶层常量
+const FRESH = hasFlag("--fresh", "--no-cache");
+let freshDir = null;
+if (FRESH) {
+  freshDir = fs.mkdtempSync(path.join(os.tmpdir(), "zhcache-"));
+  process.env.DSH_AI_RESEARCH_CACHE = freshDir;
+}
+
 const { NAME_MAP, NAME_RE, swapNames, restoreNames, lostPlaceholder } = await import(GUARD);
 const { translateTexts } = await import(MOD);
 
-const args = process.argv.slice(2);
-let text = "";
-if (args[0] === "-f" || args[0] === "--file") {
-  if (!args[1]) { console.error("用法：zh.mjs -f <文件>"); process.exit(2); }
-  text = fs.readFileSync(args[1], "utf8");
-} else if (args.length) {
-  text = args.join(" ");
-} else {
-  text = fs.readFileSync(0, "utf8");
+// ---------- 读入 ----------
+const VALUE_OPTS = new Set(["-f", "--file", "-o", "--out"]);
+// 只剔除认识的开关；其余以 - 开头的字符串当正文（"−5% inflation" 这类不能被静默吞掉）
+const BARE_FLAGS = new Set(["--fresh", "--no-cache", "-h", "--help"]);
+const positional = [];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (VALUE_OPTS.has(a)) { i++; continue; }
+  if (BARE_FLAGS.has(a)) continue;
+  positional.push(a);
 }
 
+let text = "";
+const filePath = optValue("-f") || optValue("--file");
+if (filePath) text = fs.readFileSync(filePath, "utf8");
+else if (positional.length) text = positional.join(" ");
+else text = fs.readFileSync(0, "utf8");
+
+const outPath = optValue("-o") || optValue("--out");
+
+// ---------- 引擎怪癖归一（逐行做，围栏内代码绝不动）----------
 // 已知引擎怪癖：动词 falls 会被音译成「福尔斯」（引擎把它当 Falls 专名）。
 // 归一化成 declines 再翻，语义不变；"Niagara Falls" 这类专名（前一词大写开头）不动。
-text = text.replace(/(?<![A-Z][a-z]+\s)\bfalls\b/g, "declines");
-
-// 同类怪癖：动词 ships 会被音译成「船舶」（引擎当船的复数）。
-// 科技语境里 ships 几乎总是动词（发布/推出），归一化成 releases；名词复数用法罕见，可接受。
-text = text.replace(/\bships\b/g, "releases");
-
-// 2026-11-13 批量实测（20 个高频新闻动词）后追加，都是低风险高收益项：
-// teases 会被译成「挑逗」（科技语境=预告/预热），归一化成 previews；
-// 缩写 exec 引擎不认识会原样保留（"former Amazon exec"），展开成 executive 就能译出「高管」。
-text = text.replace(/\bteases\b/g, "previews");
-text = text.replace(/\bexec\b/g, "executive");
-
-// 2026-11-13 用户修例（法律与技术语境）：
-// claim 在诉讼语境被引擎译成「索赔」（保险义），归一化成 alleges（主张/指控）；
-// human action simulation 术语组合按通行译法改写成 behavior（人的行为模拟）。
-text = text.replace(/\b(lawsuit|suit|complaint|case) claims\b/gi, "$1 alleges");
-text = text.replace(/\bclaims\b(?=\s+(that|it|the|its)\b)/gi, "alleges");
-text = text.replace(/\bhuman action simulation\b/gi, "human behavior simulation");
+// 同类：ships 会被音译成「船舶」（当船的复数）→ releases；teases 被译成「挑逗」→ previews；
+// 缩写 exec 引擎不认识会原样保留 → executive；诉讼语境的 claims 被译成「索赔」→ alleges。
+function normQuirks(line) {
+  let s = line;
+  s = s.replace(/(?<![A-Z][a-z]+\s)\bfalls\b/g, "declines");
+  s = s.replace(/\bships\b/g, "releases");
+  s = s.replace(/\bteases\b/g, "previews");
+  s = s.replace(/\bexec\b/g, "executive");
+  s = s.replace(/\b(lawsuit|suit|complaint|case) claims\b/gi, "$1 alleges");
+  s = s.replace(/\bclaims\b(?=\s+(that|it|the|its)\b)/gi, "alleges");
+  s = s.replace(/\bhuman action simulation\b/gi, "human behavior simulation");
+  return s;
+}
 
 const lines = text.replace(/\r\n/g, "\n").split("\n");
 const URL_RE = /!\[[^\]]*\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)\]）」”'"，。；、！？]+/gi;
 // 数字 token：任何含数字的连续片段（$178.67、4.5%、1,205、ml.g5.8xlarge、GPT-4、2026-11-15、B2B 全部命中）
 const NUM_RE = /[\w$€£¥%.,+-]*\d[\w$€£¥%.,+-]*/g;
-// 量级词整组：$13 billion / 44.1 million / 2.3 trillion —— 数字+量级词必须一起占位（SCALE{X}），
+// 量级词整组：$13 billion / 44.1 million / Rs 18 crore / 2.3 trillion —— 数字+量级词必须一起占位（NUM{X}），
 // 因为引擎对量级词系统性错译且换措辞救不了（2026-11-15 实测：$13 billion→「10亿美元」、
 // 13 billion dollars→「13亿美元」错 100 倍、40 billion dollars→「40 10亿美元」崩坏）。
-// 翻后按 SI 确定性换算还原成中文量级（billion→N*10 亿、million→N*100 万、trillion→N 万亿）。
-const SCALE_RE = /([$€£¥]?)(\d[\d,.]*)\s*(trillion|billion|million)\b(?:\s+(dollars?|euros?|pounds?|yen|yuan)\b)?/gi;
-const SCALE_CUR = { $: "美元", "€": "欧元", "£": "英镑", "¥": "元" };
-const SCALE_WORD = { dollar: "美元", dollars: "美元", euro: "欧元", euros: "欧元", pound: "英镑", pounds: "英镑", yen: "日元", yuan: "元" };
+// 翻后按 SI 确定性换算还原成中文量级（见 zhAmount）。
+// 2026-11-16：补 thousand / lakh / crore / lakh crore 与 ₹ / Rs（印度财经稿常见 Rs 18 crore）。
+// 货币符与其后空格一起捕获（"Rs 18 crore" 的 Rs 与数字之间有空格），还原前 trim。
+const SCALE_RE = /(Rs\.?\s*|₹\s*|[$€£¥]\s*)?(\d[\d,.]*)\s*(lakh\s+crore|crore|lakh|trillion|billion|million|thousand)\b(?:\s+(dollars?|euros?|pounds?|yen|yuan|rupees?)\b)?/gi;
+const SCALE_MUL = { trillion: 1e12, billion: 1e9, million: 1e6, thousand: 1e3, "lakh crore": 1e12, crore: 1e7, lakh: 1e5 };
+const SCALE_CUR = { $: "美元", "€": "欧元", "£": "英镑", "¥": "元", "₹": "卢比", Rs: "卢比", "Rs.": "卢比" };
+const SCALE_WORD = { dollar: "美元", dollars: "美元", euro: "欧元", euros: "欧元", pound: "英镑", pounds: "英镑", yen: "日元", yuan: "元", rupee: "卢比", rupees: "卢比" };
+
+// 统一 SI → 中文量级（≥1e12 万亿 / ≥1e8 亿 / ≥1e4 万，其余原数）。
+// 用 toFixed(4) 压浮点尾差，再去掉尾随零；不改用「原数×10 亿」的老办法是为了让 1300 billion → 1.3万亿。
+const zhAmount = (si) => {
+  const fmt = (v) => {
+    let s = v.toFixed(4).replace(/\.?0+$/, "");
+    return s === "" || s === "-0" ? "0" : s;
+  };
+  if (si >= 1e12) return `${fmt(si / 1e12)}万亿`;
+  if (si >= 1e8) return `${fmt(si / 1e8)}亿`;
+  if (si >= 1e4) return `${fmt(si / 1e4)}万`;
+  return fmt(si);
+};
 const scaleRestore = (cur, num, unit, word) => {
   const n = parseFloat(String(num).replace(/,/g, ""));
   if (!isFinite(n)) return null;
-  let zhNum, unitZh = "";
-  if (/^t/i.test(unit)) { zhNum = String(n); unitZh = "万亿"; }
-  else if (/^b/i.test(unit)) { zhNum = String(n * 10); unitZh = "亿"; }
-  else { zhNum = String(n * 100); unitZh = "万"; }
-  if (zhNum.includes(".")) zhNum = zhNum.replace(/\.?0+$/, "");
-  const curZh = cur ? SCALE_CUR[cur] || "" : (word ? SCALE_WORD[String(word).toLowerCase()] || "" : "");
-  return `${zhNum}${unitZh}${curZh}`;
+  const key = String(unit).toLowerCase().replace(/\s+/g, " ");
+  const mul = SCALE_MUL[key];
+  if (!mul) return null;
+  const curRaw = cur ? String(cur).trim() : "";
+  const curZh = curRaw ? SCALE_CUR[curRaw] || "" : (word ? SCALE_WORD[String(word).toLowerCase()] || "" : "");
+  return `${zhAmount(n * mul)}${curZh}`;
 };
 
 // 1) URL/数字/人名 → 占位符（按行独立编号；PERSON[A-Z] 给 URL/人名，NUM[A-Z] 给数字）
@@ -107,7 +175,9 @@ for (const l of lines) {
     zhGuard = true;                                                    // ② 脏行：中文 ≤3 字符 → 中文片段也占位保护
   }
 
-  const bag = { __num: {}, __scale: {} };
+  line = normQuirks(line);   // 引擎怪癖归一：只对送翻行做（围栏行已在上面 continue）
+
+  const bag = { __num: {} };
   if (prefix) bag.__prefix = prefix;
   let i = 0, ni = 0;
   let g = line.replace(URL_RE, (m) => {
@@ -139,6 +209,14 @@ for (const l of lines) {
 // 2) 整批翻译
 const zh = await translateTexts(guarded, { verbose: !!process.env.ZH_VERBOSE });
 
+// 2.5) 整批全失败快速失败：引擎/网络挂了时，逐行重翻只会把整体拖成 N 行 × 2 次请求 + 800ms 退避。
+// 判据：所有需要翻的行（非围栏、非空、有 bag）译文都为空 → 判定本轮翻译不可用，直接原文输出。
+const needIdx = [];
+for (let i = 0; i < guarded.length; i++) if (!fenceFlag[i] && guarded[i].trim() && bags[i]) needIdx.push(i);
+const alive = needIdx.filter((i) => zh[i] != null && String(zh[i]).trim()).length;
+const ENGINE_DOWN = needIdx.length > 0 && alive === 0;
+if (ENGINE_DOWN && process.env.ZH_VERBOSE) console.error("[zh] 整批翻译失败（引擎不可用），本轮原样输出");
+
 // 3) 行数守恒 + 占位符计数：非空输入行必须得到非空译文，且 NUM 占位符一个不丢——
 //    「被吞+附近数字串位」是静默损坏（实测 "RFC 7523"→"RFC 5."、"HTTP 401"→"HTTP 200"，
 //    无残留、无空行，只查残留拦不住），必须按送出数逐行对账；对不齐单行重翻，仍不齐置 null
@@ -149,30 +227,30 @@ const zh = await translateTexts(guarded, { verbose: !!process.env.ZH_VERBOSE });
 const numOk = (t, bag) => {
   if (!bag) return true;
   const need = Object.keys(bag.__num);
-  const needS = Object.keys(bag.__scale || {});
-  if (!need.length && !needS.length) return true;
+  if (!need.length) return true;
   const got = new Set((String(t).match(/NUM([A-Za-z])/g) || []).map((m) => m.slice(3).toUpperCase()));
-  const gotS = new Set((String(t).match(/SCALE([A-Za-z])/g) || []).map((m) => m.slice(5).toUpperCase()));
-  return need.every((c) => got.has(c)) && needS.every((c) => gotS.has(c));
+  return need.every((c) => got.has(c));
 };
-for (let i = 0; i < guarded.length; i++) {
-  if (fenceFlag[i] || !guarded[i].trim()) continue;
-  let bad = zh[i] == null || !String(zh[i]).trim();
-  if (!bad && bags[i]) bad = lostPlaceholder(String(zh[i]), bags[i]) || /(NUM[A-Za-z]|SCALE[A-Za-z])/.test(String(zh[i])) || !numOk(String(zh[i]), bags[i]);
-  if (bad) {
-    // 重翻输入加零宽空格扰动：单行 key 与批处理相同，会命中批处理写入的坏缓存，扰动后强制真请求。
-    // 引擎对占位行有抽风（同一行两次请求结果不同，实测一次保留 NUMA 一次吞掉），扰动试 2 次提高恢复率。
-    let oneT = null;
-    for (const z of ["\u200b", "\u200b\u200b"]) {
-      const one = await translateTexts([guarded[i] + z]);
-      oneT = one && one[0] ? String(one[0]).replace(/\u200b/g, "") : null;
-      if (oneT && oneT.trim() && !lostPlaceholder(oneT, bags[i]) && !/(NUM[A-Za-z]|SCALE[A-Za-z])/.test(oneT) && numOk(oneT, bags[i])) break;
-      oneT = null;
-    }
-    if (oneT) {
-      zh[i] = oneT;
-    } else {
-      zh[i] = null;   // 单行重翻也保不全 → 输出段按原文兜底
+if (!ENGINE_DOWN) {
+  for (let i = 0; i < guarded.length; i++) {
+    if (fenceFlag[i] || !guarded[i].trim()) continue;
+    let bad = zh[i] == null || !String(zh[i]).trim();
+    if (!bad && bags[i]) bad = lostPlaceholder(String(zh[i]), bags[i]) || /(NUM[A-Za-z])/.test(String(zh[i])) || !numOk(String(zh[i]), bags[i]);
+    if (bad) {
+      // 重翻输入加零宽空格扰动：单行 key 与批处理相同，会命中批处理写入的坏缓存，扰动后强制真请求。
+      // 引擎对占位行有抽风（同一行两次请求结果不同，实测一次保留 NUMA 一次吞掉），扰动试 2 次提高恢复率。
+      let oneT = null;
+      for (const z of ["\u200b", "\u200b\u200b"]) {
+        const one = await translateTexts([guarded[i] + z]);
+        oneT = one && one[0] ? String(one[0]).replace(/\u200b/g, "") : null;
+        if (oneT && oneT.trim() && !lostPlaceholder(oneT, bags[i]) && !/(NUM[A-Za-z])/.test(oneT) && numOk(oneT, bags[i])) break;
+        oneT = null;
+      }
+      if (oneT) {
+        zh[i] = oneT;
+      } else {
+        zh[i] = null;   // 单行重翻也保不全 → 输出段按原文兜底
+      }
     }
   }
 }
@@ -184,12 +262,6 @@ const restoreNum = (t, bag) => t.replace(/NUM([A-Za-z])/g, (m, c) => {
   if (Array.isArray(v)) return scaleRestore(v[1], v[2], v[3], v[4]) ?? m;   // 量级组 → SI 确定性换算中文（$13 billion→130亿美元）
   return v === undefined ? m : v;
 });
-// SCALE 占位还原：按 SI 确定性换算成中文量级（$13 billion→130亿美元、44.1 million→4410万）
-const restoreScale = (t, bag) => t.replace(/SCALE([A-Za-z])/g, (m, c) => {
-  const v = (bag.__scale || {})[c.toUpperCase()];
-  if (!v) return m;
-  return scaleRestore(v[0], v[1], v[2]) ?? m;   // 解析失败原样还原原文片段
-});
 // 量级还原后的数值回检：每个量级组的换算结果必须独立出现在译文里（前面不能还是数字——
 // 防「占位符补位」损坏，实测引擎会在 NUMC 前补 100 变「10023亿美元」，includes 会误判含「23亿」）
 const scaleOk = (t, bag) => {
@@ -199,25 +271,35 @@ const scaleOk = (t, bag) => {
     return s == null || new RegExp("(?<![0-9])" + s).test(t);
   });
 };
+const finish = (raw, bag) => {
+  if (raw == null) return null;
+  let t = fixParens(restoreNames(swapNames(restoreNum(String(raw), bag), bag), bag));
+  if (/(NUM[A-Za-z])/.test(t) || !scaleOk(t, bag)) t = null;
+  return t;
+};
 const out = [];
 for (let i = 0; i < lines.length; i++) {
   const src = lines[i];
   if (fenceFlag[i]) { out.push(src); continue; }
-  if (!src.trim() || bags[i] == null) { out.push(swapNames(src)); continue; }   // 空行/围栏外/跳过行（bags==null=正常中文行）
-  let t = zh[i] == null ? null : String(zh[i]);
-  if (t != null) {
-    t = fixParens(restoreNames(swapNames(restoreNum(restoreScale(t, bags[i]), bags[i])), bags[i]), bags[i]);   // 先 SCALE 后 NUM 再 swapNames（避免 URL 里的 gates 等子串被换）
-    if (t != null && !scaleOk(t, bags[i])) t = null;   // 量级换算值缺失（占位补位损坏）→ 走下方重翻兜底
-  }
-  if (t == null || /PERSON[A-Z]/i.test(t) || /(NUM[A-Za-z]|SCALE[A-Za-z])/.test(t) || !numOk(zh[i] ?? "", bags[i])) {
-    const again = await translateTexts([guarded[i] + "\u200b"]);   // 零宽扰动绕过坏缓存（同上）
+  if (!src.trim() || bags[i] == null) { out.push(swapNames(src)); continue; }   // 空行/跳过行（bags==null=正常中文行）
+  let t = finish(zh[i], bags[i]);
+  if (t == null) {
+    // 终极兜底重翻（同样零宽扰动绕过坏缓存）
+    const again = ENGINE_DOWN ? null : await translateTexts([guarded[i] + "\u200b"]);
     const againT = again && again[0] ? String(again[0]).replace(/\u200b/g, "") : null;
-    if (againT && numOk(againT, bags[i])) {
-      t = fixParens(restoreNames(swapNames(restoreNum(restoreScale(againT, bags[i]), bags[i])), bags[i]), bags[i]);
-      if (/(NUM[A-Za-z]|SCALE[A-Za-z])/.test(t) || !scaleOk(t, bags[i])) t = src;   // 终极兜底：数字还原失败或量级值缺失的行保留原文
-    } else t = src;
+    t = againT && numOk(againT, bags[i]) ? finish(againT, bags[i]) : null;
+    if (t == null) t = src;   // 数字还原失败/量级值缺失/引擎不可用 → 保留原文
   }
   if (bags[i] && bags[i].__prefix) t = bags[i].__prefix + t;   // 剥掉的中文前缀（「摘要：」）拼回
   out.push(t);
 }
-process.stdout.write(out.join("\n"));
+
+const result = out.join("\n");
+if (outPath) {
+  fs.writeFileSync(outPath, result, "utf8");
+  if (process.env.ZH_VERBOSE) console.error(`[zh] 已写入 ${outPath}`);
+} else {
+  process.stdout.write(result);
+}
+
+if (freshDir) { try { fs.rmSync(freshDir, { recursive: true, force: true }); } catch { /* 忽略 */ } }
