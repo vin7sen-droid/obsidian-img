@@ -11,6 +11,16 @@
 //
 // 通道说明（2026-11-13 实测）：Google gtx 429（本机 IP 限流）、Bing ttranslatev3 401、
 // DeepLX 公共实例返回广告；腾讯 Transmart 稳定可用，50 条标题一批约 4.3s。
+//
+// 2026-11-16 优化（备份 bak/translate.mjs.050900.opt.bak）：
+//   ① 抽出 runBatches()：translateTexts 与 translateRes 原本各抄一份批处理循环，
+//      导致 falls 归一、占位符泄漏重翻、sameText 统计只在 translateRes 有 → 统一后两条通道行为一致
+//      （实测旧版 translateTexts 把 "falls" 译成「福尔斯」，因为它没有 falls→declines 归一）
+//   ② translateTexts 现在也有占位符泄漏单条重翻（原只有 translateRes 有）
+//   ③ protect() 加 URL/图片语法整体占位（腾讯会把 https:// 全角化、把 ! 转成全角 ！）
+//   ④ SCALE_RE 货币符与数字间空格并进货币组（"Rs  18 crore" 双空格也命中）；换算统一 toFixed(4)
+//      压浮点尾差（旧版 1.005 billion → 「10.049999999999999亿」，且实测整句被引擎译成「1000万美元」）
+//   ⑤ 源码从 431 行降到 435 行但消除约 70 行重复（净增来自新增的 URL 保护与注释）
 // 关键坑：文本必须放 source.text_list，放顶层 text_list 或 source.text 会报
 //   "Invalid value of source.text_list"；返回数组与入参同序。
 import fs from "node:fs";
@@ -157,22 +167,34 @@ function idiomZh(m) {
 // million/crore/lakh 系统性错译 10~100 倍（$1.4 Trillion→「1.4美元」、Rs 18 crore→「18亿卢比」、
 // ₹1.88 Lakh Crore→「18.8亿卢比」，连续两天 xcheck 各抓 3 条同类），换措辞救不了——整组占位，
 // 还原值直接写**换算后的中文**（$1.4 Trillion→「1.4万亿美元」），restore 零改动自动还原。
-const SCALE_RE = /([$€£¥₹]|Rs\.?)?\s?(\d[\d,]*(?:\.\d+)?)\s*(trillion|billion|million|thousand|lakh\s+crore|crore|lakh)(?![A-Za-z])/gi;
+// 2026-11-16 修两处：①货币符与数字间的空格并进货币组（"Rs 18 crore" 的 Rs 后有空格），
+// 但不能加「无货币符时的前导 \s*」——那会吃掉前词与数字间的空格，还原后出「raised130亿美元」粘连；
+// ②换算结果压浮点尾差（1.005 billion → 10.049999999999999 亿），统一 toFixed(4) 去尾零。
+const SCALE_RE = /(Rs\.?\s*|[$€£¥₹]\s*)?(\d[\d,]*(?:\.\d+)?)\s*(trillion|billion|million|thousand|lakh\s+crore|crore|lakh)(?![A-Za-z])/gi;
 const SCALE_MULT = { trillion: 1e12, billion: 1e9, million: 1e6, thousand: 1e3, "lakh crore": 1e12, crore: 1e7, lakh: 1e5 };
+const SCALE_CUR = { "$": "美元", "€": "欧元", "£": "英镑", "¥": "日元", "₹": "卢比", "Rs": "卢比", "Rs.": "卢比" };
+const fmtNum = (v) => {
+  const s = v.toFixed(4).replace(/\.?0+$/, "");
+  return s === "" || s === "-0" ? "0" : s;
+};
 function scaleZh(m, cur, num, unit) {
   const v = Number(num.replace(/,/g, "")) * SCALE_MULT[unit.toLowerCase().replace(/\s+/g, " ")];
   let zh;
-  if (v >= 1e12) zh = (v / 1e12).toString().replace(/\.0+$/, "") + "万亿";
-  else if (v >= 1e8) zh = (v / 1e8).toString().replace(/\.0+$/, "") + "亿";
-  else if (v >= 1e4) zh = (v / 1e4).toString().replace(/\.0+$/, "") + "万";
+  if (v >= 1e12) zh = fmtNum(v / 1e12) + "万亿";
+  else if (v >= 1e8) zh = fmtNum(v / 1e8) + "亿";
+  else if (v >= 1e4) zh = fmtNum(v / 1e4) + "万";
   else zh = num;
-  if (cur) zh += cur.trim() === "$" ? "美元" : cur.trim() === "€" ? "欧元" : cur.trim() === "£" ? "英镑"
-    : cur.trim() === "¥" ? "日元" : "卢比"; // Rs / Rs. → 卢比
+  if (cur) zh += SCALE_CUR[String(cur).trim()] || "";
   return zh;
 }
+// URL / markdown 链接整体占位（2026-11-16 加）：腾讯会把 https:// 全角化成 https：//、
+// 把图片 ![alt](url) 的孤立 ! 转成全角 ！，直接调 translateTexts 的调用方会拿到坏链接。
+// zh.mjs 在外层也占位一次，重复无害（外层先做，这里看到的是占位符或纯文本）。
+const URL_RE = /!\[[^\]]*\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)\]）」”'"，。；、！？]+/gi;
 function protect(text, bag) {
   const put = (s) => { const i = bag.length; bag.push(s); return "zqx" + i + "zqx"; };
-  let out = text.replace(PREFIX_RE, (m) => put(m));   // 先护「模型名+版本+代号」
+  let out = text.replace(URL_RE, (m) => put(m));      // 先护链接（含图片语法）
+  out = out.replace(PREFIX_RE, (m) => put(m));        // 再护「模型名+版本+代号」
   // 习语定译（2026-11-15）：整短语占位、还原定译中文，排在人名之前（习语内无实体冲突）
   out = out.replace(IDIOM_RE, (m) => put(idiomZh(m)));
   // 人名（2026-11-14 接入 name-guard 共享 NAMES 表，与 zh.mjs 同源）：
@@ -287,6 +309,69 @@ function buildBatches(todo) {
   return batches;
 }
 
+// 引擎怪癖归一：小写动词 falls 会被音译成「福尔斯」（引擎当 Falls 专名），归一成 declines。
+// 必须在 protect 之前替换，缓存 key 仍用原文；"Niagara Falls" 大写不动（无 i 标志）。
+// 2026-11-16：原只在 translateRes 里做、translateTexts 缺失 → 两条通道行为不一致，抽到公共层。
+const normFalls = (t) => t.replace(/\bfalls\b/g, "declines");
+
+/**
+ * 统一的批处理循环（2026-11-16 抽取）：protect → 请求（2 次重试）→ restore →
+ * 占位符泄漏单条重翻 → 落缓存。原本 translateTexts 与 translateRes 各抄一份，
+ * 导致 falls 归一、占位泄漏重翻、sameText 统计三处只在其中一边存在。
+ * @returns {{batches:number,done:number,failed:number,same:number,timedOut:boolean,phRetry:number}}
+ */
+async function runBatches(todo, cache, opts = {}) {
+  const t0 = opts.t0 || Date.now();
+  const budget = Number(opts.budgetMs || 180000);
+  const verbose = !!opts.verbose;
+  const batches = buildBatches(todo);
+  let done = 0, failed = 0, same = 0, timedOut = false, phRetry = 0;
+  for (const batch of batches) {
+    if (Date.now() - t0 > budget) { timedOut = true; break; }
+    // 专名保护：翻前换成 zqx<N>zqx 占位符，翻完还原（Anthropic→「拟人化」这类错译的根因）。
+    const bag = [];
+    const guarded = batch.map((t) => protect(normFalls(t), bag));
+    let arr = null;
+    for (let attempt = 0; attempt < 2 && !arr; attempt++) {
+      if (attempt) await sleep(800);
+      try { arr = await callTencent(guarded); } catch (e) {
+        if (attempt === 1) { failed += batch.length; if (verbose) console.error("[translate] 失败：" + (e && e.message)); }
+      }
+    }
+    if (!arr) continue;
+    arr = arr.map((t) => restore(t, bag));
+    // 占位符泄漏检测（2026-11-15）：译文里残留 zqx 字样 = 腾讯吞改了占位符，
+    // 该行单独重翻一次，仍失败保留当前译文。
+    for (let i = 0; i < arr.length; i++) {
+      if (!/zqx/i.test(arr[i])) continue;
+      if (Date.now() - t0 > budget) break;
+      try {
+        const bag2 = [];
+        const one = await callTencent([protect(normFalls(batch[i]), bag2)]);
+        if (one && one[0]) {
+          const fixed = S(restore(one[0], bag2)).trim();
+          if (fixed && !/zqx/i.test(fixed)) { arr[i] = fixed; phRetry++; }
+        }
+      } catch { /* 重翻失败保留原译文 */ }
+      await sleep(300);
+    }
+    batch.forEach((t, i) => {
+      const zh = S(arr[i]).trim();
+      if (!zh) return;
+      // 还原后与原文相同 = 整条几乎全是专名（如 "Gemini 4 Hydrogen"），腾讯原样返回；
+      // 这类标题保留英文是正确的（渲染回落原文），不计入失败、也不写缓存。
+      if (zh === t) { same++; return; }
+      cache[keyOf(t)] = zh;
+    });
+    done += batch.length;
+    saveCache(cache); // 每批落一次，中断也保留
+    if (verbose) console.error("[translate] " + done + "/" + todo.length + " 用时 " + ((Date.now() - t0) / 1000).toFixed(1) + "s");
+    await sleep(200);
+  }
+  if (timedOut) saveCache(cache);
+  return { batches: batches.length, done, failed, same, timedOut, phRetry };
+}
+
 /**
  * 通用文本翻译：任意字符串数组 → 中文数组（同序；不需翻译或翻不出的位置为 null）。
  * 与雷达共用缓存与专名保护，供其他会话/脚本直接 import 使用。
@@ -301,31 +386,8 @@ export async function translateTexts(texts, opts = {}) {
   const cache = loadCache();
   const need = (t) => t.length >= 2 && !HAS_CJK.test(t);
   const todo = [...new Set(src.filter((t) => need(t) && !cache[keyOf(t)]))];
-  const batches = buildBatches(todo);
-  if (opts.verbose) console.error("[translate] 待翻 " + todo.length + " 条，分 " + batches.length + " 批");
-  let done = 0;
-  for (const batch of batches) {
-    if (Date.now() - t0 > budgetMs) break;
-    const bag = [];
-    const guarded = batch.map((t) => protect(t, bag));
-    let arr = null;
-    for (let attempt = 0; attempt < 2 && !arr; attempt++) {
-      if (attempt) await sleep(800);
-      try { arr = await callTencent(guarded); } catch (e) {
-        if (attempt === 1 && opts.verbose) console.error("[translate] 失败：" + (e && e.message));
-      }
-    }
-    if (!arr) continue;
-    arr = arr.map((t) => restore(t, bag));
-    batch.forEach((t, i) => {
-      const zh = S(arr[i]).trim();
-      if (zh && zh !== t) cache[keyOf(t)] = zh;
-    });
-    done += batch.length;
-    saveCache(cache);
-    if (opts.verbose) console.error("[translate] " + done + "/" + todo.length);
-    await sleep(200);
-  }
+  if (opts.verbose) console.error("[translate] 待翻 " + todo.length + " 条，分 " + buildBatches(todo).length + " 批");
+  await runBatches(todo, cache, { t0, budgetMs, verbose: opts.verbose });
   return src.map((t) => { const z = cache[keyOf(t)]; return need(t) && z ? unitZh(z) : null; });
 }
 
@@ -349,56 +411,8 @@ export async function translateRes(res, opts = {}) {
     else todo.push(t);
   }
 
-  const batches = buildBatches(todo);
-  let done = 0, failed = 0, same = 0, timedOut = false, phRetry = 0;
-  if (opts.verbose) console.error("[translate] 待翻 " + todo.length + " 条 / " + texts.size + " 条（缓存命中 " + hit + "），分 " + batches.length + " 批");
-  for (const batch of batches) {
-    if (Date.now() - t0 > budgetMs) { timedOut = true; break; }
-    // 专名保护：翻前换成 zqx<N>zqx 占位符，翻完还原（Anthropic→「拟人化」这类错译的根因）。
-    // falls→declines：引擎怪癖对齐 zh.mjs——小写动词 falls 会被音译成「福尔斯」；
-    // 在 protect 之前替换，缓存 key 仍用原文（collectTexts 不动），"Niagara Falls" 大写不动。
-    const bag = [];
-    const guarded = batch.map((t) => protect(t.replace(/\bfalls\b/g, "declines"), bag));
-    let arr = null;
-    for (let attempt = 0; attempt < 2 && !arr; attempt++) {
-      if (attempt) await sleep(800);
-      try { arr = await callTencent(guarded); } catch (e) {
-        if (attempt === 1) { failed += batch.length; if (opts.verbose) console.error("[translate] 失败：" + (e && e.message)); }
-      }
-    }
-    if (arr) {
-      arr = arr.map((t) => restore(t, bag));
-      // 占位符泄漏检测（2026-11-15，对齐 zh.mjs 的行级兜底）：译文里残留 zqx 字样
-      // = 腾讯吞改了占位符（zqx0→"zqx0"半截等），该行单独重翻一次，仍失败保留当前译文
-      for (let i = 0; i < arr.length; i++) {
-        if (!/zqx/i.test(arr[i])) continue;
-        if (Date.now() - t0 > budgetMs) break;
-        try {
-          const bag2 = [];
-          const one = await callTencent([protect(batch[i].replace(/\bfalls\b/g, "declines"), bag2)]);
-          if (one && one[0]) {
-            const fixed = S(restore(one[0], bag2)).trim();
-            if (fixed && !/zqx/i.test(fixed)) { arr[i] = fixed; phRetry++; }
-          }
-        } catch { /* 重翻失败保留原译文 */ }
-        await sleep(300);
-      }
-    }
-    if (!arr) continue;
-    batch.forEach((t, i) => {
-      const zh = S(arr[i]).trim();
-      if (!zh) return;
-      // 还原后与原文相同 = 整条几乎全是专名（如 "Gemini 4 Hydrogen"），腾讯原样返回；
-      // 这类标题保留英文是正确的（渲染回落原文），不计入失败。
-      if (zh === t) { same++; return; }
-      cache[keyOf(t)] = zh;
-    });
-    done += batch.length;
-    saveCache(cache); // 每批落一次，中断也保留
-    if (opts.verbose) console.error("[translate] " + done + "/" + todo.length + " 用时 " + ((Date.now() - t0) / 1000).toFixed(1) + "s");
-    await sleep(200);
-  }
-  if (timedOut) saveCache(cache);
+  if (opts.verbose) console.error("[translate] 待翻 " + todo.length + " 条 / " + texts.size + " 条（缓存命中 " + hit + "），分 " + buildBatches(todo).length + " 批");
+  const st = await runBatches(todo, cache, { t0, budgetMs, verbose: opts.verbose });
 
   const zhOf = (v) => {
     const s = S(v).trim();
@@ -424,7 +438,7 @@ export async function translateRes(res, opts = {}) {
   res.translateStats = {
     candidates: texts.size, cacheHit: hit, requested: todo.length,
     buzzSkipped: texts.buzzSkipped || 0,
-    batches: batches.length, timedOut, failed, sameText: same, placeholderRetry: phRetry,
+    batches: st.batches, timedOut: st.timedOut, failed: st.failed, sameText: st.same, placeholderRetry: st.phRetry,
     titleZh: nTitle, summaryZh: nSum, buzzZh: nBuzz,
     elapsedMs: Date.now() - t0,
   };
