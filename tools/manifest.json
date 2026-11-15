@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-16T03:46:53+08:00",
+ "updated": "2026-11-16T04:01:38+08:00",
  "files": {
   "clip.py": {
    "sha256": "0ef043e45fa7525127572f9327e2135b0f87f45ce44ba375f2abcc56a4535a89",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "f11a254fb5d2b39e829af1dad5381770609b328823dd9bdb6311eedddd8c3b3c",
-   "bytes": 15079
+   "sha256": "3d51b11b9f0e084600cc5f17d076a78b857592ad2f2b23f29a83cd2d4cca116a",
+   "bytes": 15097
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -65,9 +65,13 @@
    "sha256": "e400be1a2e776d8a2c76a1975f64f430011aa265dcc14913ba0333e58bc1bcb7",
    "bytes": 1906
   },
+  "absnumcheck.py": {
+   "sha256": "99ff011bad8d79bd6c4d26816cdbefec884b6e92185a0184052e627ee9c3e7c2",
+   "bytes": 5272
+  },
   "summary_check.py": {
-   "sha256": "cadf146df39ef97791f6ce7e8d22b81a4ec7d86b50d2905cddfcb7e4c81549d2",
-   "bytes": 3060
+   "sha256": "90974beaf6fef0ebd45c0f3a55f17a21f1a804dda7a84755ba4a1bcec1f22db3",
+   "bytes": 5974
   },
   "radar_spotcheck.py": {
    "sha256": "062e64629b3c2d5084bca05a2f1fffb872e9dcbe330cb4a0f358cf5120d4a843",
