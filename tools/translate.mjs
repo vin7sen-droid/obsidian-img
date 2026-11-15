@@ -64,6 +64,7 @@ const PROTECT_WORDS = [
   // 地名（引擎会把 Falls 音译成「福尔斯」）
   "Niagara Falls", "Falls Church",
 ].filter(Boolean);
+export { PROTECT_WORDS };
 // 长词优先，避免 "Meta" 抢在 "Metadata" 前半段之类；用字母数字边界判定
 const PROTECT_RE = new RegExp(
   "(" + [...new Set(PROTECT_WORDS)].sort((a, b) => b.length - a.length).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")" +
