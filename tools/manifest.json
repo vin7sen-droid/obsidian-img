@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-15T09:14:34+08:00",
+ "updated": "2026-11-15T09:20:14+08:00",
  "files": {
   "clip.py": {
    "sha256": "68efe6d97528aeea4d5d72be2050781047fd6cb468851e33c37a26e7a4047af8",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "d2902f8efb3141244a69a408090bb5c48f9f8f00370836554dcc7ffe3a5876d8",
-   "bytes": 14995
+   "sha256": "9c995364bfa8a8a6e961d205e1eedcd8ff9bf6a4ce450129909ea11956d5b225",
+   "bytes": 15059
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -58,8 +58,8 @@
    "bytes": 6963
   },
   "zh.mjs": {
-   "sha256": "22f5274c025e8e4d7385ecd5eb58e650c8860241200d424d96a1cdd6bc1d00a5",
-   "bytes": 12213
+   "sha256": "edca495b7022afba1a801fdcd7b766ffbe3d107923e158e731b8ec6c1c3d0c71",
+   "bytes": 12111
   },
   "numcheck.py": {
    "sha256": "e400be1a2e776d8a2c76a1975f64f430011aa265dcc14913ba0333e58bc1bcb7",
@@ -70,8 +70,20 @@
    "bytes": 4927
   },
   "xcheck.mjs": {
-   "sha256": "fb2ccf1bd1c3a89d3114a69cded721c1b4ffb48d70123d7d7799ab3e88adb211",
-   "bytes": 20955
+   "sha256": "46bc13e6842886fd6ba717cef8f6bc80b9b6e5370c9c24bf27a36f8d25fe754c",
+   "bytes": 23532
+  },
+  "translate.mjs": {
+   "sha256": "f754179bcaeb20f304d6ca191d764c5f1837c8d003f10ff9c1fbfaf087c7ceb6",
+   "bytes": 18855
+  },
+  "name-guard.mjs": {
+   "sha256": "07ceadefdd24e4e6a100da6965291edf7eb5957123def78cca75cf5309ebf73f",
+   "bytes": 12385
+  },
+  "names-extra.json": {
+   "sha256": "04b9c734df0edf74eebb3167b9612d6e4d000af9fbdd964a4747c82912b83359",
+   "bytes": 134
   }
  }
 }
