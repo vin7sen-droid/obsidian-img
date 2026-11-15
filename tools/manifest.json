@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-15T13:37:56+08:00",
+ "updated": "2026-11-16T00:30:21+08:00",
  "files": {
   "clip.py": {
    "sha256": "68efe6d97528aeea4d5d72be2050781047fd6cb468851e33c37a26e7a4047af8",
@@ -58,8 +58,8 @@
    "bytes": 6963
   },
   "zh.mjs": {
-   "sha256": "b0530d37f416d1a7478cbdb181392e390865629cc30f6dfc0df6518ecfa80241",
-   "bytes": 12201
+   "sha256": "7d04474f8fc16257208caa133f1df6fe723655ccbfc14c2ae7c909c15dce08af",
+   "bytes": 13920
   },
   "numcheck.py": {
    "sha256": "e400be1a2e776d8a2c76a1975f64f430011aa265dcc14913ba0333e58bc1bcb7",
@@ -70,20 +70,20 @@
    "bytes": 4927
   },
   "xcheck.mjs": {
-   "sha256": "d8f89f0ae1fe67d710e66e70e8ddc518b1d56445c522dde3b38288625c9495a9",
-   "bytes": 29996
+   "sha256": "852dd504a7d825e97f924881b545dd14d89f536f7edac2bd49a2b452de83e00f",
+   "bytes": 32063
   },
   "translate.mjs": {
-   "sha256": "841295cced1b524ed4797bf38139ebc2bc0085af968c62cf1412e9249285bf40",
-   "bytes": 20431
+   "sha256": "dc2c3ea95bf3303be7380a831fe9cdf9ed1f62f6ea0c94767e156ea05e2398c9",
+   "bytes": 23473
   },
   "name-guard.mjs": {
-   "sha256": "07ceadefdd24e4e6a100da6965291edf7eb5957123def78cca75cf5309ebf73f",
-   "bytes": 12385
+   "sha256": "493b1978230a88b389791bd380c9e54e4b045ddee14cd0d597166280c406aa46",
+   "bytes": 12379
   },
   "names-extra.json": {
-   "sha256": "16f72e00300fe51f60f0f57a4854b2b225344ed8b457b80eadff02baec4279ef",
-   "bytes": 156
+   "sha256": "272c3d8891c53184fc876d3205903423af28e141b84566f20885370edda0615b",
+   "bytes": 187
   }
  }
 }
