@@ -1,0 +1,353 @@
+// 英文内容中文化：腾讯 Transmart 批量翻译 + 本地磁盘缓存（2026-11-13）
+//
+// 目标：抓来的英文标题 / 摘要 / 社区帖标题，落盘前翻成中文，让 Obsidian 里能直接读。
+// 原则：
+//   1) **不改原字段**：译文写 it.title_zh / it.summary_zh（buzz 条目写 b.title_zh），
+//      title/summary 保留英文原文，渲染层用「_zh 优先、回落原文」，可追溯、可复算。
+//   2) **失败绝不阻塞落盘**：网络错、限流、超预算 → 跳过该条保持英文，saveDigest 照常写。
+//   3) **缓存优先**：同一标题/摘要只翻一次（~/.dsh-ai-research/translate-cache.json），
+//      重复跑同一批源几乎零请求；每批落一次缓存，中途中断也不白干。
+//   4) 开关：DSH_AI_RESEARCH_TRANSLATE=off|0|false|no 可整体关掉；预算 DSH_AI_RESEARCH_TRANSLATE_BUDGET_MS（默认 180000）。
+//
+// 通道说明（2026-11-13 实测）：Google gtx 429（本机 IP 限流）、Bing ttranslatev3 401、
+// DeepLX 公共实例返回广告；腾讯 Transmart 稳定可用，50 条标题一批约 4.3s。
+// 关键坑：文本必须放 source.text_list，放顶层 text_list 或 source.text 会报
+//   "Invalid value of source.text_list"；返回数组与入参同序。
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { NAME_MAP, NAME_RE, swapNames } from "./name-guard.mjs";
+
+const ENDPOINT = "https://transmart.qq.com/api/imt";
+const CACHE_DIR = process.env.DSH_AI_RESEARCH_CACHE || path.join(os.homedir(), ".dsh-ai-research");
+const CACHE_FILE = path.join(CACHE_DIR, "translate-cache.json");
+const HAS_CJK = /[\u4e00-\u9fff]/;
+const S = (x) => (x == null ? "" : String(x));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const BATCH_MAX_ITEMS = 40;     // 单次请求最多几条（实测 50 也 OK，留余量）
+const BATCH_MAX_CHARS = 6000;   // 单次请求总字符上限（摘要偏长，按字符切更稳）
+const TEXT_MAX_CHARS = 1200;    // 单条文本上限，超出截断（标题不会触发，摘要最长约 400）
+
+// ── 专名保护 ──────────────────────────────────────────────────────────────
+// 通用机翻会把专名当普通词意译：Anthropic→「拟人化」、Gemini→「双子座」、
+// Gemini 4 Hydrogen→「双子座4号氢气」。翻前把专名换成 zqx<N>zqx 占位符
+// （实测腾讯会原样保留该 token），翻完再还原，专名就不会被译坏。
+const PROTECT_WORDS = [
+  // 公司 / 机构
+  "OpenAI", "Anthropic", "Google", "DeepMind", "Meta", "Microsoft", "Apple", "Amazon", "AWS",
+  "NVIDIA", "AMD", "Intel", "TSMC", "Samsung", "Qualcomm", "Broadcom", "ARM", "xAI", "Mistral", "Cohere",
+  "Perplexity", "Midjourney", "Runway", "Databricks", "Snowflake", "Palantir", "Salesforce", "Oracle", "IBM",
+  "Baidu", "Alibaba", "Tencent", "ByteDance", "Huawei", "Xiaomi", "Moonshot", "Zhipu", "MiniMax", "StepFun",
+  "DeepSeek", "SenseTime", "Cambricon", "GitHub", "Hugging Face", "Reddit", "Hacker News", "Stack Overflow",
+  "arXiv", "NeurIPS", "ICML", "ICLR", "CVPR", "ACL", "Stability AI", "Cerebras", "Groq", "SambaNova",
+  "Uber", "Netflix", "Spotify", "Stripe", "Airbnb", "Tesla", "SpaceX", "TikTok", "Wikipedia", "Figma",
+  // 媒体 / 论坛（HN 系保留英文）
+  "Show HN", "Ask HN", "HN",
+  // 技术缩写
+  "LLM", "AGI", "API", "SDK", "GPU", "TPU", "MoE", "RAG", "LoRA", "GGUF", "TTS", "ASR", "OCR",
+  // 交易所 / 市场代码 / 机构缩写（2026-11-15 语义抽查实测：NasdaqGM 被译成「纳斯达克通用汽车公司」、
+  // Anthropic PBC 的 PBC 被展开成「中国人民银行」——这类两三个字母的金融缩写引擎一律猜错）
+  "NasdaqGM", "NasdaqGS", "NasdaqCM", "NYSE", "AMEX", "OTC", "PBC", "LLC", "Inc", "Ltd", "Corp",
+  // 模型 / 产品（2026-11-15 实测：Titan 删除——腾讯裸翻小写 titan→「巨头」、专名上下文自己保留，
+  // 放进保护表反而把 "AI titan"（普通名词）也钉成英文）
+  "GPT", "ChatGPT", "DALL-E", "Sora", "Claude", "Gemini", "Gemma", "Llama", "Qwen", "Kimi", "GLM",
+  "Ernie", "Doubao", "Grok", "Copilot", "Phi", "Nemotron", "Granite", "Whisper",
+  "Codex", "Veo", "Imagen", "NotebookLM", "Jules", "Cursor", "Windsurf", "Replit", "Vercel", "Ollama",
+  "vLLM", "LangChain", "LlamaIndex", "PyTorch", "TensorFlow", "JAX", "CUDA", "MCP", "Model Context Protocol",
+  "Stable Diffusion", "ElevenLabs", "Suno", "Synthesia", "Scale AI",
+  // 芯片 / 硬件
+  "H100", "H200", "B200", "GB200", "Blackwell", "Hopper", "Trainium", "Inferentia", "RISC-V",
+  // 语义抽查发现的专名错字（Microduck 被译成 Microbuck）
+  "Microduck",
+  // 地名（引擎会把 Falls 音译成「福尔斯」）
+  "Niagara Falls", "Falls Church",
+].filter(Boolean);
+// 长词优先，避免 "Meta" 抢在 "Metadata" 前半段之类；用字母数字边界判定
+const PROTECT_RE = new RegExp(
+  "(" + [...new Set(PROTECT_WORDS)].sort((a, b) => b.length - a.length).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")" +
+  "(?![A-Za-z0-9])", "gi");
+const PREFIX_RE = new RegExp(
+  "\\b(GPT|Gemini|Claude|Llama|Qwen|Grok|Gemma|DeepSeek|Phi|Mistral|Kimi|GLM|Ernie|Doubao)[- ]?\\d+(?:\\.\\d+)?" +
+  "(?:[ -](?:Opus|Sonnet|Haiku|Pro|Ultra|Flash|Mini|Nano|Max|Turbo|Preview|Hydrogen|thinking))?", "gi");
+
+// 单位中文化（2026-11-15 用户要求）：腾讯常把 gigawatts/megawatts 这类单位原样留在中文句子里
+// （彩云会译成「吉瓦/兆瓦」）。只在**译文含中文**时替换，英文原文整段不动；
+// 缩写成 GW/MW/kW 的保留原样（中文媒体也这么写），只处理完整单词。
+const UNIT_ZH = {
+  "terawatt-hours": "太瓦时", "terawatt-hour": "太瓦时", "terawatts": "太瓦", "terawatt": "太瓦",
+  "gigawatt-hours": "吉瓦时", "gigawatt-hour": "吉瓦时", "gigawatts": "吉瓦", "gigawatt": "吉瓦",
+  "megawatt-hours": "兆瓦时", "megawatt-hour": "兆瓦时", "megawatts": "兆瓦", "megawatt": "兆瓦",
+  "kilowatt-hours": "千瓦时", "kilowatt-hour": "千瓦时", "kilowatts": "千瓦", "kilowatt": "千瓦",
+  "watt-hours": "瓦时", "watt-hour": "瓦时", "watts": "瓦", "watt": "瓦",
+};
+// 前后用「非字母」边界而不是 \b：腾讯常输出「5gigawatts」这种数字直接粘单位的写法，
+// \b 在 5 与 g 之间不成立（两侧都是 \w），会把整句漏掉。
+const UNIT_RE = /(?<![A-Za-z])(terawatt-hours?|terawatts?|gigawatt-hours?|gigawatts?|megawatt-hours?|megawatts?|kilowatt-hours?|kilowatts?|watt-hours?|watts?)(?![A-Za-z])/gi;
+// 腾讯偶尔把 megawatts 译成「兆瓦tts」（吞词留下的尾巴），顺手清掉
+const UNIT_TAIL_RE = /([太吉兆千万]?瓦)(?:tts|ts|es|s)(?![A-Za-z])/gi;
+function unitZh(s) {
+  if (!/[\u4e00-\u9fff]/.test(s)) return s; // 没中文＝原文整段，不动
+  return s
+    .replace(UNIT_RE, (m) => UNIT_ZH[m.toLowerCase()] || m)
+    .replace(UNIT_TAIL_RE, "$1")
+    .replace(/(\d)\s+(?=[太吉兆千万]?瓦)/g, "$1")   // 「1.5 吉瓦」→「1.5吉瓦」
+    .replace(/(\d)个(?=[太吉兆千万]?瓦)/g, "$1");   // 引擎给占位符补的量词：「114个兆瓦」→「114兆瓦」
+}
+function protect(text, bag) {
+  const put = (s) => { const i = bag.length; bag.push(s); return "zqx" + i + "zqx"; };
+  let out = text.replace(PREFIX_RE, (m) => put(m));   // 先护「模型名+版本+代号」
+  // 人名（2026-11-14 接入 name-guard 共享 NAMES 表，与 zh.mjs 同源）：
+  // 占位还原值是**中文译名**（Jensen Huang→黄仁勋），不是原词——雷达标题里的人名不再靠引擎音译。
+  out = out.replace(NAME_RE, (m) => put(NAME_MAP.get(m.toLowerCase()) || m));
+  // 单位必须**排在 PROTECT_RE 之前**：PROTECT_WORDS 里的 tts/watts 片段会先把 megawatts 切碎
+  // （实测 megawatts → "megaw"+zqx 占位），落到 PROTECT_RE 后面就再也匹配不到完整单位词。
+  out = out.replace(UNIT_RE, (m) => put(UNIT_ZH[m.toLowerCase()] || m));
+  out = out.replace(PROTECT_RE, (m) => put(m));       // 再护单词表专名
+  return out;
+}
+function restore(text, bag) {
+  // 腾讯会把占位符里的数字拆出空格（zqx0zqx → "zqx 0 zqx" / "zqx 0zqx"），所以允许空白
+  return unitZh(swapNames(S(text).replace(/zqx\s*(\d+)\s*zqx/gi, (m, i) => (bag[Number(i)] !== undefined ? bag[Number(i)] : m))));
+  // swapNames 兜底：占位符被腾讯吞掉时人名会以英文原样残留在译文里，这里直接换成中文译名
+}
+
+export function translateEnabled() {
+  const v = S(process.env.DSH_AI_RESEARCH_TRANSLATE).trim().toLowerCase();
+  return !["0", "off", "false", "no", "none"].includes(v);
+}
+
+const keyOf = (t) => crypto.createHash("sha1").update(S(t)).digest("hex").slice(0, 16);
+
+function loadCache() {
+  try { return JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")) || {}; } catch { return {}; }
+}
+// 2026-11-15 修并发覆盖：此前直接把「进程启动时读到的内存快照」整体写回，
+// 两个进程同时翻译时后写的会把对方新增条目全抹掉（实测 798 条被 27 条覆盖）；
+// 现在写前重读磁盘做增量合并（内存优先），且临时文件名带 pid 防互相踩。
+function saveCache(c) {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    let disk = {};
+    try { disk = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")) || {}; } catch { /* 坏文件当空 */ }
+    const merged = Object.assign({}, disk, c);
+    const tmp = `${CACHE_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(merged), "utf8");
+    fs.renameSync(tmp, CACHE_FILE);
+  } catch { /* 缓存写失败不影响主流程 */ }
+}
+
+async function callTencent(texts) {
+  const body = {
+    header: { fn: "auto_translation", client_key: "browser-chrome-" + process.pid + "-" + Date.now() },
+    type: "plain",
+    model_category: "normal",
+    source: { lang: "en", text_list: texts },
+    target: { lang: "zh" },
+  };
+  const r = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "Referer": "https://transmart.qq.com/",
+      "Origin": "https://transmart.qq.com",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!r.ok) throw new Error("transmart HTTP " + r.status);
+  const j = await r.json();
+  if (!j || !j.header || j.header.ret_code !== "succ") throw new Error("transmart: " + (j && (j.message || j.header && j.header.ret_code)));
+  const out = j.auto_translation;
+  if (!Array.isArray(out) || out.length !== texts.length) throw new Error("transmart 返回条数不符：" + (out && out.length) + " vs " + texts.length);
+  return out.map(S);
+}
+
+/** 收集 res 里所有「需要翻译的英文文本」（去重）。
+ * 2026-11-14 分流（用户定，借鉴热评报告规则）：buzz（社区热议）里纯表情/符号或 ≤12 字符的短梗，
+ * 机翻只产噪音（纯表情被译成账号名、meme 直译成废话），不送翻译、渲染回落英文原文；
+ * 资讯类长句照常机翻打底。items（新闻标题/摘要）不受此限。 */
+function collectTexts(res) {
+  const texts = new Set();
+  let buzzSkipped = 0;
+  const add = (v) => {
+    const s = S(v).trim();
+    if (!s || s.length < 2 || HAS_CJK.test(s)) return;
+    texts.add(s.slice(0, TEXT_MAX_CHARS));
+  };
+  const addBuzz = (v) => {
+    const s = S(v).trim();
+    if (!s || s.length < 2 || HAS_CJK.test(s)) return;
+    if (!/[A-Za-z]{2,}/.test(s) || s.length <= 12) { buzzSkipped++; return; }
+    texts.add(s.slice(0, TEXT_MAX_CHARS));
+  };
+  for (const it of res.items || []) { add(it.title); add(it.summary); }
+  for (const k of ["hn", "reddit", "x", "weixin"]) {
+    for (const b of (res.buzz && res.buzz[k]) || []) {
+      if (!b || typeof b !== "object") continue;
+      addBuzz(b.title || b.name || b.text);
+    }
+  }
+  texts.buzzSkipped = buzzSkipped;
+  return texts;
+}
+
+function buildBatches(todo) {
+  const batches = [];
+  let cur = [], chars = 0;
+  for (const t of todo) {
+    const len = t.length + 8;
+    if (cur.length && (cur.length >= BATCH_MAX_ITEMS || chars + len > BATCH_MAX_CHARS)) {
+      batches.push(cur); cur = []; chars = 0;
+    }
+    cur.push(t); chars += len;
+  }
+  if (cur.length) batches.push(cur);
+  return batches;
+}
+
+/**
+ * 通用文本翻译：任意字符串数组 → 中文数组（同序；不需翻译或翻不出的位置为 null）。
+ * 与雷达共用缓存与专名保护，供其他会话/脚本直接 import 使用。
+ *   import { translateTexts } from ".../translate.mjs";
+ *   const zh = await translateTexts(["OpenAI ships a new model"]);
+ */
+export async function translateTexts(texts, opts = {}) {
+  const src = (texts || []).map((t) => S(t).slice(0, TEXT_MAX_CHARS));
+  if (!translateEnabled()) return src.map(() => null);
+  const budgetMs = Number(opts.budgetMs || process.env.DSH_AI_RESEARCH_TRANSLATE_BUDGET_MS || 180000);
+  const t0 = Date.now();
+  const cache = loadCache();
+  const need = (t) => t.length >= 2 && !HAS_CJK.test(t);
+  const todo = [...new Set(src.filter((t) => need(t) && !cache[keyOf(t)]))];
+  const batches = buildBatches(todo);
+  if (opts.verbose) console.error("[translate] 待翻 " + todo.length + " 条，分 " + batches.length + " 批");
+  let done = 0;
+  for (const batch of batches) {
+    if (Date.now() - t0 > budgetMs) break;
+    const bag = [];
+    const guarded = batch.map((t) => protect(t, bag));
+    let arr = null;
+    for (let attempt = 0; attempt < 2 && !arr; attempt++) {
+      if (attempt) await sleep(800);
+      try { arr = await callTencent(guarded); } catch (e) {
+        if (attempt === 1 && opts.verbose) console.error("[translate] 失败：" + (e && e.message));
+      }
+    }
+    if (!arr) continue;
+    arr = arr.map((t) => restore(t, bag));
+    batch.forEach((t, i) => {
+      const zh = S(arr[i]).trim();
+      if (zh && zh !== t) cache[keyOf(t)] = zh;
+    });
+    done += batch.length;
+    saveCache(cache);
+    if (opts.verbose) console.error("[translate] " + done + "/" + todo.length);
+    await sleep(200);
+  }
+  return src.map((t) => { const z = cache[keyOf(t)]; return need(t) && z ? unitZh(z) : null; });
+}
+
+/**
+ * 原地补 title_zh / summary_zh（buzz 补 title_zh），返回 res 本身。
+ * opts.budgetMs 默认 180000；超预算就停，剩余保持英文。
+ * opts.verbose 打印进度（cli 用）。
+ */
+export async function translateRes(res, opts = {}) {
+  if (!res || res.__translated) return res;
+  if (!translateEnabled()) { res.translateStats = { skipped: "disabled" }; return res; }
+  const budgetMs = Number(opts.budgetMs || process.env.DSH_AI_RESEARCH_TRANSLATE_BUDGET_MS || 180000);
+  const t0 = Date.now();
+  const cache = loadCache();
+  const texts = collectTexts(res);
+
+  let hit = 0;
+  const todo = [];
+  for (const t of texts) {
+    if (cache[keyOf(t)]) hit++;
+    else todo.push(t);
+  }
+
+  const batches = buildBatches(todo);
+  let done = 0, failed = 0, same = 0, timedOut = false, phRetry = 0;
+  if (opts.verbose) console.error("[translate] 待翻 " + todo.length + " 条 / " + texts.size + " 条（缓存命中 " + hit + "），分 " + batches.length + " 批");
+  for (const batch of batches) {
+    if (Date.now() - t0 > budgetMs) { timedOut = true; break; }
+    // 专名保护：翻前换成 zqx<N>zqx 占位符，翻完还原（Anthropic→「拟人化」这类错译的根因）。
+    // falls→declines：引擎怪癖对齐 zh.mjs——小写动词 falls 会被音译成「福尔斯」；
+    // 在 protect 之前替换，缓存 key 仍用原文（collectTexts 不动），"Niagara Falls" 大写不动。
+    const bag = [];
+    const guarded = batch.map((t) => protect(t.replace(/\bfalls\b/g, "declines"), bag));
+    let arr = null;
+    for (let attempt = 0; attempt < 2 && !arr; attempt++) {
+      if (attempt) await sleep(800);
+      try { arr = await callTencent(guarded); } catch (e) {
+        if (attempt === 1) { failed += batch.length; if (opts.verbose) console.error("[translate] 失败：" + (e && e.message)); }
+      }
+    }
+    if (arr) {
+      arr = arr.map((t) => restore(t, bag));
+      // 占位符泄漏检测（2026-11-15，对齐 zh.mjs 的行级兜底）：译文里残留 zqx 字样
+      // = 腾讯吞改了占位符（zqx0→"zqx0"半截等），该行单独重翻一次，仍失败保留当前译文
+      for (let i = 0; i < arr.length; i++) {
+        if (!/zqx/i.test(arr[i])) continue;
+        if (Date.now() - t0 > budgetMs) break;
+        try {
+          const bag2 = [];
+          const one = await callTencent([protect(batch[i].replace(/\bfalls\b/g, "declines"), bag2)]);
+          if (one && one[0]) {
+            const fixed = S(restore(one[0], bag2)).trim();
+            if (fixed && !/zqx/i.test(fixed)) { arr[i] = fixed; phRetry++; }
+          }
+        } catch { /* 重翻失败保留原译文 */ }
+        await sleep(300);
+      }
+    }
+    if (!arr) continue;
+    batch.forEach((t, i) => {
+      const zh = S(arr[i]).trim();
+      if (!zh) return;
+      // 还原后与原文相同 = 整条几乎全是专名（如 "Gemini 4 Hydrogen"），腾讯原样返回；
+      // 这类标题保留英文是正确的（渲染回落原文），不计入失败。
+      if (zh === t) { same++; return; }
+      cache[keyOf(t)] = zh;
+    });
+    done += batch.length;
+    saveCache(cache); // 每批落一次，中断也保留
+    if (opts.verbose) console.error("[translate] " + done + "/" + todo.length + " 用时 " + ((Date.now() - t0) / 1000).toFixed(1) + "s");
+    await sleep(200);
+  }
+  if (timedOut) saveCache(cache);
+
+  const zhOf = (v) => {
+    const s = S(v).trim();
+    if (!s) return null;
+    const z = cache[keyOf(s.slice(0, TEXT_MAX_CHARS))];
+    return z ? unitZh(z) : null;
+  };
+  let nTitle = 0, nSum = 0, nBuzz = 0;
+  for (const it of res.items || []) {
+    const tz = zhOf(it.title);
+    if (tz) { it.title_zh = tz; nTitle++; }
+    const sz = zhOf(it.summary);
+    if (sz) { it.summary_zh = sz; nSum++; }
+  }
+  for (const k of ["hn", "reddit", "x", "weixin"]) {
+    for (const b of (res.buzz && res.buzz[k]) || []) {
+      if (!b || typeof b !== "object") continue;
+      const tz = zhOf(b.title || b.name || b.text);
+      if (tz) { b.title_zh = tz; nBuzz++; }
+    }
+  }
+  res.__translated = true;
+  res.translateStats = {
+    candidates: texts.size, cacheHit: hit, requested: todo.length,
+    buzzSkipped: texts.buzzSkipped || 0,
+    batches: batches.length, timedOut, failed, sameText: same, placeholderRetry: phRetry,
+    titleZh: nTitle, summaryZh: nSum, buzzZh: nBuzz,
+    elapsedMs: Date.now() - t0,
+  };
+  return res;
+}
