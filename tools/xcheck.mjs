@@ -389,6 +389,51 @@ export async function crossCheck(res, opts = {}) {
   return { checked, skipped, failed: failures, limited, engine: chain.join("+"), de: ctx.de || null, flagged };
 }
 
+// —— 兜底行补译（2026-11-15 用户定：zh.mjs 按「占位符对账不齐→保留英文」兜底的行，
+//     优先彩云、失败回退 MyMemory，走本文件既有引擎链；URL 先占位防被引擎改坏）——
+const FILL_URL_RE = /https?:\/\/[^\s)\]）」”'"，。；、！？]+/gi;
+export async function refillFallback(srcLines, zhLines, opts = {}) {
+  const pairs = [];
+  const urlMaps = new Map();
+  for (let i = 0; i < srcLines.length; i++) {
+    const en = String(srcLines[i] ?? ""), z = String(zhLines[i] ?? "");
+    if (!en.trim() || z !== en) continue;                    // 只补「译文==原文」的兜底行
+    if (!/[A-Za-z]/.test(en) || /[\u4e00-\u9fff]/.test(z)) continue;
+    const head = en.trim()[0] || "";
+    if ("#!>|`-".includes(head)) continue;                   // 标题/图片/引用/围栏/表格行不补
+    const urls = en.match(FILL_URL_RE) || [];
+    let work = en;
+    urls.forEach((u, k) => { work = work.split(u).join(`⟦U${k}⟧`); });
+    urlMaps.set(i, urls);
+    pairs.push({ kind: "refill", idx: i, en: work });
+  }
+  if (!pairs.length) return { out: zhLines.slice(), filled: 0, skippedLink: 0, failed: 0 };
+  const ctx = { conc: opts.concurrency || 3, failBudget: opts.failBudget ?? 8, failed: 0,
+    consec: 0, limited: false, deadline: Date.now() + (opts.budgetMs ?? 120000) };
+  ctx.sample = 999;                                          // 补译不抽样，全量走彩云
+  ctx.mmSample = opts.mmSample ?? 60;                        // 回退 MyMemory 时才受抽样限制
+  for (const eng of ["caiyun", "mymemory"]) {                // 优先彩云，失败回退 MyMemory
+    if (eng === "caiyun") await fillCaiyun(pairs, ctx);
+    else await fillMyMemory(pairs, ctx);
+    if (pairs.every((p) => p.g)) break;
+  }
+  const out = zhLines.slice();
+  let filled = 0, failed = 0, skippedLink = 0;
+  for (const p of pairs) {
+    const i = p.idx, urls = urlMaps.get(i) || [];
+    let t = typeof p.g === "string" ? p.g : "";
+    if (t) {                                                 // 还原 URL 占位
+      urls.forEach((u, k) => { t = t.split(`⟦U${k}⟧`).join(u); });
+      const bad = urls.some((u) => !t.includes(u));          // 引擎改坏了 URL → 弃译文保原文
+      const okZh = /[\u4e00-\u9fff]/.test(t) || !/[\u4e00-\u9fff]/.test(zhLines[i]);
+      if (bad || !okZh) { t = ""; if (bad) skippedLink++; }
+    }
+    if (t && t.trim() && t !== srcLines[i]) { out[i] = t; filled++; }
+    else { out[i] = zhLines[i]; failed++; }
+  }
+  return { out, filled, skippedLink, failed };
+}
+
 // 人工审清单落盘：<dir>/<stamp>_人工审.md
 export function writeReviewList(dir, stamp, flagged, meta = {}) {
   if (!flagged.length) return null;
