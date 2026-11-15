@@ -11,7 +11,7 @@ import { NAME_MAP } from "./name-guard.mjs";
 // 关键词对齐用的实体表：公司/机构/模型（PROTECT_WORDS）∪ 人名表（NAME_MAP 的英文侧）。
 // 排除两类：① 有正常中文译法的技术缩写（LLM/GPU/API…译成中文不算丢失）；② NAMES 表里
 // 「译名=英文原形」的保留英文术语（agent/llm/metis…），它们不是人名、不适用「必须留痕」。
-const TECH_TERMS = new Set(["LLM", "LLMS", "AGI", "API", "SDK", "GPU", "TPU", "MOE", "RAG", "LORA", "GGUF", "TTS", "ASR", "OCR", "COPILOT", "PHI"]);
+const TECH_TERMS = new Set(["LLM", "LLMS", "AGI", "API", "SDK", "GPU", "TPU", "MOE", "RAG", "LORA", "GGUF", "TTS", "ASR", "OCR", "COPILOT", "PHI", "CORP", "CORP.", "INC", "INC.", "LTD", "LTD.", "LLC", "PBC"]);
 const KW_ENTITIES = PROTECT_WORDS.filter((w) => !TECH_TERMS.has(w.toUpperCase()));
 const KW_NAME_ENTRIES = [...NAME_MAP.entries()].filter(([en, zh]) => zh.toLowerCase() !== en.toLowerCase());
 
