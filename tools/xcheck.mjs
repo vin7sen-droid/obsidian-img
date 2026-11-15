@@ -356,6 +356,10 @@ const ALIAS_BAD = [
   { bad: "纳斯达克通用汽车", good: "NasdaqGM（纳斯达克全球精选市场）", enRe: /nasdaq/i },
   { bad: "敏捷机器人", good: "思灵机器人（Agile Robots）", enRe: /agile\s+robots/i },
   { bad: "中国人民银行", good: "Anthropic PBC（公益公司，非央行）", enRe: /anthropic/i },
+  // 2026-11-16 黄仁勋主报告 xcheck 实测回写（5 条真错中 3 条可表驱动）
+  { bad: "黄律师", good: "黄仁勋", enRe: /huang(?!\s*guangyu)/i },          // "Huang finally pulled out." 误译
+  { bad: "爱丽丝黄", good: "爱丽丝·黄", enRe: /alice\s+huang/i },           // 单姓未分隔音译（注意：Alice Huang 是另一人，不该转黄仁勋）
+  { bad: "黄纪念", good: "黄仁勋纪念", enRe: /huang\s+commemorative/i },   // "Huang commemorative black leather jacket"
 ];
 export function aliasCheck(en, zh) {
   const s = String(zh || "");
