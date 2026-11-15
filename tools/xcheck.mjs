@@ -369,9 +369,13 @@ export function keywordCheck(en, zh, nameMap) {
   }
   // 人名：name-guard 的 NAME_MAP（英文名→中文译名）。原文出现英文人名，译文既没有中文译名
   // 也没有任何英文 token（姓或名）→ 判丢失（被音译成不相干的中文，如 Huang→黄光裕/胡锦涛，属于这类）。
+  // 同一译名只报一次（Jensen Huang 与单姓 Huang 是两行，指向同一人）。
   if (nameMap) {
+    const seenZh = new Set();
     for (const [enName, zhName] of nameMap) {
+      if (seenZh.has(zhName)) continue;
       if (!new RegExp("\\b" + escRe(enName) + "\\b", "i").test(en)) continue;
+      seenZh.add(zhName);
       const tokens = enName.toLowerCase().split(/\s+/).filter((t) => t.length >= 4);
       const kept = sRaw.includes(zhName) || tokens.some((t) => sLower.includes(t));
       if (!kept) lost.push(`${enName}→${zhName}`);
