@@ -95,12 +95,31 @@ function unitZh(s) {
     .replace(/(\d)\s+(?=[太吉兆千万]?瓦)/g, "$1")   // 「1.5 吉瓦」→「1.5吉瓦」
     .replace(/(\d)个(?=[太吉兆千万]?瓦)/g, "$1");   // 引擎给占位符补的量词：「114个兆瓦」→「114兆瓦」
 }
+// 量级词 SI 换算（2026-11-15 加，从 zh.mjs 第三版防御移植）：腾讯对 trillion/billion/
+// million/crore/lakh 系统性错译 10~100 倍（$1.4 Trillion→「1.4美元」、Rs 18 crore→「18亿卢比」、
+// ₹1.88 Lakh Crore→「18.8亿卢比」，连续两天 xcheck 各抓 3 条同类），换措辞救不了——整组占位，
+// 还原值直接写**换算后的中文**（$1.4 Trillion→「1.4万亿美元」），restore 零改动自动还原。
+const SCALE_RE = /([$€£¥₹]|Rs\.?)?\s?(\d[\d,]*(?:\.\d+)?)\s*(trillion|billion|million|thousand|lakh\s+crore|crore|lakh)(?![A-Za-z])/gi;
+const SCALE_MULT = { trillion: 1e12, billion: 1e9, million: 1e6, thousand: 1e3, "lakh crore": 1e12, crore: 1e7, lakh: 1e5 };
+function scaleZh(m, cur, num, unit) {
+  const v = Number(num.replace(/,/g, "")) * SCALE_MULT[unit.toLowerCase().replace(/\s+/g, " ")];
+  let zh;
+  if (v >= 1e12) zh = (v / 1e12).toString().replace(/\.0+$/, "") + "万亿";
+  else if (v >= 1e8) zh = (v / 1e8).toString().replace(/\.0+$/, "") + "亿";
+  else if (v >= 1e4) zh = (v / 1e4).toString().replace(/\.0+$/, "") + "万";
+  else zh = num;
+  if (cur) zh += cur.trim() === "$" ? "美元" : cur.trim() === "€" ? "欧元" : cur.trim() === "£" ? "英镑"
+    : cur.trim() === "¥" ? "日元" : "卢比"; // Rs / Rs. → 卢比
+  return zh;
+}
 function protect(text, bag) {
   const put = (s) => { const i = bag.length; bag.push(s); return "zqx" + i + "zqx"; };
   let out = text.replace(PREFIX_RE, (m) => put(m));   // 先护「模型名+版本+代号」
   // 人名（2026-11-14 接入 name-guard 共享 NAMES 表，与 zh.mjs 同源）：
   // 占位还原值是**中文译名**（Jensen Huang→黄仁勋），不是原词——雷达标题里的人名不再靠引擎音译。
   out = out.replace(NAME_RE, (m) => put(NAME_MAP.get(m.toLowerCase()) || m));
+  // 量级词占位必须排在 UNIT_RE/PROTECT_RE 之前（词边界互不干扰，但顺序统一先数字后单位）
+  out = out.replace(SCALE_RE, (m, cur, num, unit) => put(scaleZh(m, cur, num, unit)));
   // 单位必须**排在 PROTECT_RE 之前**：PROTECT_WORDS 里的 tts/watts 片段会先把 megawatts 切碎
   // （实测 megawatts → "megaw"+zqx 占位），落到 PROTECT_RE 后面就再也匹配不到完整单位词。
   out = out.replace(UNIT_RE, (m) => put(UNIT_ZH[m.toLowerCase()] || m));
