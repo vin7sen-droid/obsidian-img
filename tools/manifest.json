@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-15T07:31:49+08:00",
+ "updated": "2026-11-15T09:14:34+08:00",
  "files": {
   "clip.py": {
    "sha256": "68efe6d97528aeea4d5d72be2050781047fd6cb468851e33c37a26e7a4047af8",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "1dc116a78b202eeaf24c99f4639985550abc83a7dc8b5ac7facf347bd0913334",
-   "bytes": 14981
+   "sha256": "d2902f8efb3141244a69a408090bb5c48f9f8f00370836554dcc7ffe3a5876d8",
+   "bytes": 14995
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -54,12 +54,12 @@
    "bytes": 3013
   },
   "mm.mjs": {
-   "sha256": "c3a2f491df3c8248ac765f5ffb806e9f4276e409218cc0207fc88b0985c77ab4",
-   "bytes": 6555
+   "sha256": "b6ef85511ad97b59b09d0dcd9439fd3c22e634dc129d071dbf61e92ab2c86411",
+   "bytes": 6963
   },
   "zh.mjs": {
-   "sha256": "6318bb371be4f2b95df72abd7533c9e5b0d263b00bd429da564c273c6d3e04f9",
-   "bytes": 8431
+   "sha256": "22f5274c025e8e4d7385ecd5eb58e650c8860241200d424d96a1cdd6bc1d00a5",
+   "bytes": 12213
   },
   "numcheck.py": {
    "sha256": "e400be1a2e776d8a2c76a1975f64f430011aa265dcc14913ba0333e58bc1bcb7",
@@ -68,6 +68,10 @@
   "radar_spotcheck.py": {
    "sha256": "062e64629b3c2d5084bca05a2f1fffb872e9dcbe330cb4a0f358cf5120d4a843",
    "bytes": 4927
+  },
+  "xcheck.mjs": {
+   "sha256": "fb2ccf1bd1c3a89d3114a69cded721c1b4ffb48d70123d7d7799ab3e88adb211",
+   "bytes": 20955
   }
  }
 }
