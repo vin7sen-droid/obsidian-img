@@ -30,7 +30,9 @@ def load_items():
     return items
 
 def raw_index():
+    # 优先级：raw_<date>.json（显式指定）> raw.json（daily.py 全量主文件，含雷达盲区源）> raw_*.json（raw_fetch 等旧版备份）
     cands = ([os.path.join(WORK, "raw_%s.json" % DATE)] if DATE else []) + \
+            [os.path.join(WORK, "raw.json")] + \
             sorted(glob.glob(os.path.join(WORK, "raw_*.json")), reverse=True)
     idx = {}
     for f in cands:
@@ -66,6 +68,7 @@ process.stdin.on("end", () => {
                             const key = String(Math.round(v*100)/100);
                             LENMAP[key] = m.trim();   // 反查表：170.18 → 「6.7"」
                             return " " + key + " "; })
+    .replace(/(\d(?:\.\d+)?)[\u2010-\u2015-]?(trillion|billion|million|thousand|crore|lakh)\b/gi, "$1 $2") // 连字符隔断量级词：1.6-trillion→1.6 trillion（防 SI 没乘上去）
     .replace(/\b[xX](86|64)\b/g, " ")              // 架构名 x86/x64
     .replace(/\b[A-Z]{1,3}\d{2,}\b/g, " ")          // 型号 QN10 / KB5132057 / A100
     .replace(/二次开发|二进制|二合一/g, " ")            // 中文习语数字
@@ -80,7 +83,14 @@ process.stdin.on("end", () => {
     for (const s of S) {
       const hit = bases.some(B => B.some(t =>
         (s.si === s.n) ? (!t.unit && close(s.n, t.n)) : (t.unit && close(s.si, t.si))));
-      if (!hit) flags.push(String(s.n));
+      if (!hit) {
+        if (s.si === s.n && s.n < 10) continue;          // 小整数豁免：第三方/3 类（带单位的仍查）
+        if (s.si % 10000 === 0 &&
+            /数[十百]?[万亿]|上百|上千|上万|成千/.test(p.summary))
+          continue;                                       // 模糊量词豁免（仅限真模糊基数）：数十万→100000 定点值，raw 常为 hundreds of thousands 文本。
+                                                          // 「约30亿/近650万」不豁免——si 是真值，原文可正常命中；对不上正是该 flag 给人工的跨币种/约数合理化判定
+        flags.push(String(s.n));
+      }
     }
     return { title: p.title, total: S.length, flags: flags.map(f => LENMAP[f] || f),
              bases_n: p.bases.length, missing: p.missing };
@@ -90,18 +100,22 @@ process.stdin.on("end", () => {
 '''
 
 def node_check(pairs):
-    r = subprocess.run(["node", "--input-type=module", "-e", NODE],
-                       input=json.dumps(pairs, ensure_ascii=False),
-                       capture_output=True, text=True, timeout=60)
+    """统一 node 通道；失败抛 RuntimeError 由调用方按清单制降级（exit 恒 0，不阻断主产物）"""
+    try:
+        r = subprocess.run(["node", "--input-type=module", "-e", NODE],
+                           input=json.dumps(pairs, ensure_ascii=False),
+                           capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("node 子进程超时 60s")
     if r.returncode != 0:
-        sys.stderr.write(r.stderr[-2000:]); sys.exit(1)
+        raise RuntimeError("node 失败: " + (r.stderr or "")[-500:])
     return json.loads(r.stdout)
 
 def check_md(paths):
     """--md 模式：每个路径抽「摘要：」行 vs 其余全文（正文剥图片行/表格/URL/代码围栏/frontmatter），
     SI 归一比对（复用 node_check 单对通道，bases=正文）。返回 [{note,total,flags}]。"""
     import re as _re
-    rows = []
+    rows, pending = [], []
     for path in paths:
         text = open(path, encoding="utf-8").read()
         lines = text.split("\n")
@@ -124,7 +138,7 @@ def check_md(paths):
                 if ln.startswith(("created:", "source:", "published:", "author:", "title:", "tags:", "description:")): continue
                 else: in_fm = False
             if st.startswith("```"): in_code = not in_code; continue
-            if in_code or _re.match(r"^\s*(!\[|\|)", ln): continue
+            if in_code or _re.match(r"^\s*!\[", ln): continue   # 表格数据行保留（是正文基准）；|---| 分隔行无数值无害
             ln = _re.sub(r"https?://\S+", " LINK ", ln)
             ln = _re.sub(r"\[[^\]]*\]\([^)]*\)", " LINK ", ln)
             body_lines.append(ln)
@@ -132,11 +146,19 @@ def check_md(paths):
         if not _re.search(r"\d", summ):
             rows.append({"note": os.path.basename(path), "total": 0, "flags": [], "skip": "摘要无数字"})
             continue
-        pairs = [{"title": os.path.basename(path), "summary": summ, "bases": [body], "desc_is_zh": False, "missing": []}]
-        r = node_check(pairs)[0]
-        r["note"] = os.path.basename(path)
-        rows.append(r)
-    return rows
+        pending.append((len(rows), os.path.basename(path), summ, body))
+        rows.append(None)   # 占位，批量 node 后回填
+    if pending:
+        pairs = [{"title": nt, "summary": sm, "bases": [bd], "desc_is_zh": False, "missing": []} for _, nt, sm, bd in pending]
+        try:
+            res = node_check(pairs)
+        except RuntimeError as e:
+            res = [{"title": nt, "flags": ["ERR"], "total": 0, "bases_n": 1, "missing": [],
+                    "_err": "机检失败 %s（人工核对数字）" % e} for _, nt, _, _ in pending]
+        for (ri, nt, _, _), r in zip(pending, res):
+            r["note"] = nt
+            rows[ri] = r
+    return [r for r in rows if r is not None]
 
 
 def main():
@@ -154,7 +176,11 @@ def main():
         open(path, "w").write("\n".join(out) + "\n")
         print("摘要数字机检(笔记): %d 篇 / flagged %d → %s" % (len(rows), len(flagged), path))
         return
-    items = load_items(); idx = raw_index()
+    items = load_items()
+    if not items:
+        print("摘要数字机检: workdir 无 merged.json / json/T*.json，无输入可检 → 跳过")
+        return
+    idx = raw_index()
     pairs, skipped = [], 0
     for it in items:
         zh_src = bool(re.search(r"[\u4e00-\u9fff]", it.get("title","")))
@@ -178,8 +204,7 @@ def main():
         out.append("- **%s** — 摘要数字 %s（共 %d 个数字）在 %d 个来源（raw title+desc）中无对应%s；先判「补背景数/约数合理化/跨币种换算」，确实无据再修。" % (
             r["title"], r["flags"], r["total"], r["bases_n"], note))
     if not flagged: out.append("（无 flag，全部数字在来源原文中可对应）")
-    out_dir = WORK if MODE == "workdir" else os.path.dirname(os.path.abspath(ARGS[-1]))
-    path = os.path.join(out_dir, "summary_人工审.md")
+    path = os.path.join(WORK, "summary_人工审.md")
     open(path, "w").write("\n".join(out) + "\n")
     print("摘要数字机检: 参检 %d / 跳过 %d / flagged %d → %s" % (len(res), skipped, len(flagged), path))
 
