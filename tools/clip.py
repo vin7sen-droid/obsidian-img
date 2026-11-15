@@ -892,12 +892,14 @@ def merge_comments(old_md, cmts):
 def draft_summary(paras):
     """摘要草稿升级（2026-11-16 用户定）：正文前 3 段里第一个含数字的句子——
     IT之家核心事实句多带数字，队员从「通读自己写」变「核对压缩」；
-    找不到含数字句时返回 None，调用方回落旧行为（首段前两句）。"""
+    找不到含数字句时返回 None，调用方回落旧行为（首段前两句）。
+    顺带剥掉「[IT之家](url) N 月 N 日消息，」固定开头（正文保留、摘要不必有）。"""
     for p in paras[:3]:
         for s in re.findall(r"[^。！？!?]+[。！？!?]?", p):
             s = s.strip()
             if len(s) >= 15 and re.search(r"\d", s):
-                return s
+                s = re.sub(r"^\[?IT之家\]?(?:\([^)]*\))?\s*\d+\s*月\s*\d+\s*日消息，?", "", s).strip()
+                return s or None
     return None
 
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
