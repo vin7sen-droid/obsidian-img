@@ -390,6 +390,23 @@ export async function crossCheck(res, opts = {}) {
       flagged.push({ ...p, level: "high", reason: shorty && v !== "high" ? "疑似漏译（长度比 " + ratio.toFixed(2) + "）" : "数字/单位与原文对不上" });
     else if (v === "mid") flagged.push({ ...p, level: "mid", reason: "部分数字对不上（可能换算差异，请人工判）" });
   }
+  // —— 第三票裁决（2026-11-15 用户定「3 个翻译器怎么处理」优化）：被 flag 的条目自动补跑
+  // MyMemory 当第三票（腾讯✗彩云✗时 mm 实测能翻对 away 类习语），三票并排进人工审清单。
+  // 数字类分歧不送（mm 数字不可靠，$13 billion→30 亿美元，跑了也白跑）；失败静默跳过。
+  const thirdVote = [];
+  const mmBatch = [];
+  for (const f of flagged) {
+    if (/\d/.test(f.reason) || /数字|单位/.test(f.reason)) continue;
+    mmBatch.push({ en: f.en });
+    thirdVote.push(f);
+  }
+  if (mmBatch.length) {
+    const ctx2 = { ...ctx, mmSample: mmBatch.length, mmWorkers: 3, deadline: Date.now() + 60000 };
+    try {
+      await fillMyMemory(mmBatch, ctx2);
+      thirdVote.forEach((f, i) => { if (mmBatch[i] && mmBatch[i].g) f.mm = mmBatch[i].g; });
+    } catch { /* 第三票尽力而为 */ }
+  }
   return { checked, skipped, failed: failures, limited, engine: chain.join("+"), de: ctx.de || null, flagged };
 }
 
@@ -447,7 +464,8 @@ export function writeReviewList(dir, stamp, flagged, meta = {}) {
   const lines = [
     "# AI 新闻雷达 人工审清单（" + stamp + "）",
     "",
-    "> 腾讯机翻 vs 第二通道（" + (ENGINE_ZH[meta.engine] || "彩云小译") + "）交叉校验 + 本地质检（英文残留/否定词）筛出的差异条目，**终审归人工**：核对原文后直接改日报 md（主文件 + 速览），改完本清单可删。",
+    "> 腾讯机翻 vs 第二通道（" + (ENGINE_ZH[meta.engine] || "彩云小译") + "）交叉校验 + 本地质检（英文残留/否定词/时间习语）筛出的差异条目，**终审归人工**：核对原文后直接改日报 md（主文件 + 速览），改完本清单可删。",
+    "> 非数字类分歧已自动补 **MyMemory 第三票**（腾讯✗彩云✗时它常能翻对习语），三票对照着看；数字类分歧不送 MyMemory（其 TM 语料数字不可靠）。",
     meta.checked ? "> 校验范围：" + meta.checked + " 条已译文本（第二通道未返回 " + (meta.skipped || 0) + " 条，未参与比对）。" : "",
     "",
   ];
@@ -458,6 +476,15 @@ export function writeReviewList(dir, stamp, flagged, meta = {}) {
     lines.push("- **原文**：" + f.en);
     lines.push("- **腾讯**：" + f.zh);
     lines.push(f.g ? "- **第二通道**：" + f.g : "- **第二通道**：—（本地质检，未走引擎）");
+    if (f.mm) {
+      // 三票一致性标记（2026-11-15）：MyMemory 站哪边，帮人工快速定夺
+      const sameT = norm(f.mm) === norm(f.zh);
+      const sameG = norm(f.mm) === norm(f.g);
+      const tag = sameT && !sameG ? "（MyMemory 与腾讯一致 → 彩云疑似噪音）"
+        : sameG && !sameT ? "（**MyMemory 与第二通道一致 → 腾讯疑似错译，建议采纳第二通道**）"
+        : sameT && sameG ? "（三票一致 → 大概率误报，可放行）" : "（三票各异 → 以人工判断为准）";
+      lines.push("- **MyMemory（第三票）**：" + f.mm + " " + tag);
+    }
     lines.push("");
   });
   fs.writeFileSync(p, lines.filter((l) => l !== "").join("\n"), "utf-8");
