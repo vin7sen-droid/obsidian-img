@@ -16,8 +16,8 @@
 
 import fs from "node:fs";
 
-const MOD = "/root/.dsh/profiles/web/node_modules/dsh-ai-research/tools/ai-news-radar/translate.mjs";
-const GUARD = "/root/.dsh/profiles/web/node_modules/dsh-ai-research/tools/ai-news-radar/name-guard.mjs";
+const MOD = "/root/workspace/tools/translate.mjs";
+const GUARD = "/root/workspace/tools/name-guard.mjs";
 const { NAME_MAP, NAME_RE, swapNames, restoreNames, lostPlaceholder } = await import(GUARD);
 const { translateTexts } = await import(MOD);
 
