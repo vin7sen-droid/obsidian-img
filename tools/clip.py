@@ -1254,6 +1254,17 @@ def main():
         if _names:
             tags = _names
             _sg_msg = "标签候选（自动填初始 tags，精修复核）: " + "、".join(_names)
+        else:
+            # 词典无候选 = 库内新主题 → 调 LLM 出标签（GLM-5.3-flash 主 / DeepSeek 后备，2026-11-17）
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                from tag_llm import suggest as _llm_suggest
+                _lt = _llm_suggest(title)
+                if _lt:
+                    tags = _lt
+                    _sg_msg = "标签候选（新主题·LLM 生成，精修复核）: " + "、".join(_lt)
+            except Exception as _e:
+                pass
         if _dup:
             _sg_msg = (_sg_msg + " | " if _sg_msg else "") + _dup
     # 2026-11-16：上限从 2 提到 3——标签规则本就是 1-3 个，tags[:2] 会把用户显式给的第三个标签丢掉
