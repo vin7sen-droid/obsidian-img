@@ -1001,6 +1001,7 @@ def suggest_tags(title_text, n=3):
         if not out.startswith("标签候选:"):
             return [], "", out
         names = [x.strip() for x in out.split(":", 1)[1].split("|")[0].split("、") if x.strip()]
+        names = [x for x in names if not x.startswith("无（")]
         dup = ""
         if "|" in out:
             dup = out.split("|", 1)[1].strip().replace("⚠️疑似重复", "⚠️库内已有同题")
