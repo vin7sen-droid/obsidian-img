@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-16T05:20:49+08:00",
+ "updated": "2026-11-16T09:33:24+08:00",
  "files": {
   "clip.py": {
    "sha256": "cabae310b694fd5704f2df765510738f49da3152d1eb46ec75abbae34b41dca6",
@@ -86,8 +86,8 @@
    "bytes": 12379
   },
   "names-extra.json": {
-   "sha256": "e8a8e60d34fbeb4cd8c3b12ed3a97326021ee1013bab5f02c44347a2c4196c39",
-   "bytes": 223
+   "sha256": "37dbcde352132acffa57e7be7d8a17a763206f9ef9695a5112e98622b89a634e",
+   "bytes": 250
   }
  }
 }
