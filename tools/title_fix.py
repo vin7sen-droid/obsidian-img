@@ -202,6 +202,12 @@ def author_fallback(page, current=None):
     cands += _meta_values(page, ["author", "article:author", "og:article:author", "twitter:creator"])
     for m in re.finditer(r'<a[^>]+rel=["\']author["\'][^>]*>(.*?)</a>', page, re.S | re.I):
         cands.append(re.sub(r"<[^>]+>", "", m.group(1)))
+    # schema.org microdata (RDFa)：AWS blog 写成
+    # <span property="author" typeof="Person"><span property="name">Nolan Chen</span></span>
+    for m in re.finditer(r'<(span|div|a)[^>]+property="author"[^>]*>(.*?)</\1>', page, re.S | re.I):
+        inner = m.group(2)
+        nm = re.search(r'property="name"[^>]*>([^<]+)<', inner)
+        cands.append(nm.group(1) if nm else re.sub(r"<[^>]+>", "", inner))
     for pat in (r'<span[^>]+class=["\'][^"\']*author[^"\']*["\'][^>]*>(.*?)</span>',
                 r'<div[^>]+class=["\'][^"\']*author[^"\']*["\'][^>]*>(.*?)</div>',
                 r'<p[^>]+class=["\'][^"\']*author[^"\']*["\'][^>]*>(.*?)</p>'):
