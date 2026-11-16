@@ -61,7 +61,9 @@ def _cache_put(h, tags):
 def _prompt(title, summary):
     top = _top_tags()
     p = ("给这条中文科技新闻标题定 1-2 个标签。规则：看主骨定数量；公司+产品可双标签；"
-         "删来源媒体和类别凑数词；短名优先；能复用已有标签就别造新词。")
+         "删来源媒体和类别凑数词；短名优先；能复用已有标签就别造新词；"
+         "公司名用通行全称（字节跳动而非字节、英伟达而非 NVIDIA）；"
+         "不要给泛类词（显卡驱动、智能手机、芯片）这类谁都套得上的标签。")
     if top:
         p += "已有标签参考：" + "、".join(top)
     p += '\n只输出 JSON：{"tags":["标签1","标签2"]}\n\n标题：' + title
@@ -100,16 +102,17 @@ def suggest(title, summary="", use_cache=True, verbose=False):
         if c is not None:
             return c
     for model in MODELS:
-        try:
-            tags = _call(model, key, base, prompt)
-            if verbose:
-                print("  [tag_llm] %s → %s" % (model, "/".join(tags) or "(空)"))
-            if tags:
-                _cache_put(h, tags)
-                return tags
-        except Exception as e:
-            if verbose:
-                print("  [tag_llm] %s ERR %s" % (model, type(e).__name__))
+        for attempt in range(2):          # 空响应/异常都重试一次（中转限流会吐空 content）
+            try:
+                tags = _call(model, key, base, prompt)
+                if verbose:
+                    print("  [tag_llm] %s → %s" % (model, "/".join(tags) or "(空)"))
+                if tags:
+                    _cache_put(h, tags)
+                    return tags
+            except Exception as e:
+                if verbose:
+                    print("  [tag_llm] %s ERR %s" % (model, type(e).__name__))
     return []
 
 
