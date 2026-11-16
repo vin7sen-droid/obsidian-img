@@ -120,6 +120,10 @@ def main():
             if len(e["by"]) < 3:
                 e["by"].append((round(s, 1), doc["title"][:34]))
     ranked = sorted(cand.items(), key=lambda kv: -(kv[1]["w"] + counts.get(kv[0], 0) * 0.15))
+    # 相对阈值截断：远离最高分的候选多是 bigram 噪音（2026-11-17 实测 F1 64%→需瘦身）
+    if ranked:
+        _top = ranked[0][1]["w"] + counts.get(ranked[0][0], 0) * 0.15
+        ranked = [(t, e) for t, e in ranked if (e["w"] + counts.get(t, 0) * 0.15) >= _top * 0.45]
     if a.brief:
         _k = min(a.n, 5)
         top = "、".join(t for t, _ in ranked[: _k])
