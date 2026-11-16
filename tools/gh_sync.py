@@ -36,7 +36,7 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
          "@weibo_dl.py", "@douyin_dl.py",
          "@social_dl.py", "@ins_export/ins_dl.py", "@ins_export/selfupdate.py",
          "mm.mjs", "zh.mjs", "numcheck.py", "summary_check.py", "radar_spotcheck.py", "xcheck.mjs",
-        "draft_summary.py",
+        "draft_summary.py", "hn.py",
          "translate.mjs", "name-guard.mjs", "names-extra.json",
          "tag_suggest.py", "tag_llm.py"]
 # 边界护栏：下载器只允许以 @ 前缀（workspace 根）引用；裸 *_dl.py = 误放 tools/，拒绝
