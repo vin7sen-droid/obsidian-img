@@ -1249,22 +1249,25 @@ def main():
     if a.tags:
         tags = a.tags.split()
     elif not getattr(a, "no_tag_suggest", False):
-        # 候选优先于 keywords：候选来自历史笔记（本库已定版的标签），keywords 常是站点分类词
-        _names, _dup, _brief = suggest_tags(title)
-        if _names:
-            tags = _names
-            _sg_msg = "标签候选（自动填初始 tags，精修复核）: " + "、".join(_names)
-        else:
-            # 词典无候选 = 库内新主题 → 调 LLM 出标签（GLM-5.3-flash 主 / DeepSeek 后备，2026-11-17）
-            try:
-                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-                from tag_llm import suggest as _llm_suggest
-                _lt = _llm_suggest(title)
-                if _lt:
-                    tags = _lt
-                    _sg_msg = "标签候选（新主题·LLM 生成，精修复核）: " + "、".join(_lt)
-            except Exception as _e:
-                pass
+        # 2026-11-17：词典只做重复检测，不再出标签。
+        # 实测词典基于字符 n-gram，只认库内见过的词——库外新标题（高通骁龙/小米 17 Ultra/
+        # 比亚迪/红米 K90）四条全错（分别给成 马斯克、OPPO手机、储能、苹果）。
+        # 标签改为直接调 LLM（GLM-5.3-flash 主 / laguna-xs-2.1 备），它按语义判断。
+        _names, _dup, _brief = suggest_tags(title)   # 仅取 dup（⚠️库内已有同题）
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from tag_llm import suggest as _llm_suggest
+            _lt = _llm_suggest(title)
+            if _lt:
+                tags = _lt
+                _sg_msg = "标签候选（LLM 生成，精修复核）: " + "、".join(_lt)
+        except Exception as _e:
+            pass
+        if not tags:
+            # LLM 不可用时的兜底：退回词典候选（总比站点 keywords 强）
+            if _names:
+                tags = _names
+                _sg_msg = "标签候选（LLM 不可用·词典兜底，精修复核）: " + "、".join(_names)
         if _dup:
             _sg_msg = (_sg_msg + " | " if _sg_msg else "") + _dup
     # 2026-11-16：上限从 2 提到 3——标签规则本就是 1-3 个，tags[:2] 会把用户显式给的第三个标签丢掉
