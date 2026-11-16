@@ -171,8 +171,13 @@ def main():
             if r["flags"]:
                 out.append("- **%s** — 摘要数字 %s 在正文无对应；先判「约数合理化/背景数」，确实无据再修。30 秒人工判。" % (r["note"], r["flags"]))
         if not flagged: out.append("（无 flag，摘要数字全部在正文可对应）")
-        out_dir = os.path.dirname(os.path.abspath(ARGS[-1]))
-        path = os.path.join(out_dir, "summary_人工审.md")
+        # 2026-11-17 修：原来落「最后一个参数所在目录」——--md 传的是 Inbox 笔记时
+        # 清单被写进 Obsidian 笔记区，会被全库扫描/待精修统计/派单当成笔记处理。
+        # 清单统一落 /root/workspace/digests/<日期>_摘要数字_人工审.md（与 xcheck/雷达同惯例）。
+        import datetime as _dt
+        _dd = DIGESTS if "DIGESTS" in globals() else "/root/workspace/digests"
+        os.makedirs(_dd, exist_ok=True)
+        path = os.path.join(_dd, "%s_摘要数字_人工审.md" % _dt.date.today().isoformat())
         open(path, "w").write("\n".join(out) + "\n")
         print("摘要数字机检(笔记): %d 篇 / flagged %d → %s" % (len(rows), len(flagged), path))
         return
