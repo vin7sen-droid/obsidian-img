@@ -1216,6 +1216,28 @@ def main():
         except Exception:
             pass
 
+    # 中文站定制：作者/时间在页面节点或 JS 变量里，meta 全空（2026-11-17 实测）
+    #   量子位：<span class="author">…<a rel="author">思邈</a> + <span class="date"> + <span class="time">
+    #   快科技：<span style="color:#666">责任编辑：若风</span> + var g_PostDateStr = new Date('2026-11-09 08:53:26.877')
+    #   少数派/title_fix 的 JSON-LD 兜底已覆盖，不在此列
+    if "qbitai.com" in final:
+        if not author:
+            m = re.search(r'class="author".*?rel="author"[^>]*>([^<]+)<', page, re.S)
+            if m:
+                author = strip_tags(m.group(1)).strip() or None
+        m = re.search(r'<span class="date">(\d{4}-\d{2}-\d{2})</span>', page)
+        if m:
+            t = re.search(r'<span class="time">(\d{2}:\d{2}(?::\d{2})?)</span>', page)
+            date = m.group(1) + "T" + (t.group(1) if t else "00:00:00")
+    if "mydrivers.com" in final:
+        if not author:
+            m = re.search(r'责任编辑[：:]\s*([^<\s]{1,20})', page)
+            if m:
+                author = m.group(1)
+        m = re.search(r"g_PostDateStr\s*=\s*new Date\('(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)", page)
+        if m:
+            date = m.group(1) + "T" + m.group(2)
+
     # V2EX：时间与作者只在 API 里（页面无 meta 发布时间）
     if "v2ex.com" in final:
         try:
@@ -1259,8 +1281,13 @@ def main():
 
     kws = meta(page, "keywords") or ""
     _JUNK_TAG = {"业界动态", "IT资讯", "科技", "新闻", "数码", "手机", "电脑", "软件", "硬件", "互联网", "人工智能技术"}
+    # 快科技的 meta keywords 常直接等于标题（实测「国际油价创2020年来…」整句被当标签），
+    # 所以 keywords 兜底还要剔除与标题相同/是标题子串的项（2026-11-17）
+    _tkey = re.sub(r"\W+", "", title or "")
     tags = [k.strip() for k in re.split(r"[,，]", kws) if k.strip() and k.strip().lower() not in ("none", "null", "undefined", "na")
-            and k.strip() not in _JUNK_TAG]
+            and k.strip() not in _JUNK_TAG
+            and re.sub(r"\W+", "", k.strip()) not in (_tkey, "")
+            and len(k.strip()) <= 20]
     if "v2ex.com" in final:                      # V2EX 页面标签是 /tag/xxx 链接
         tags = [urllib.parse.unquote(x) for x in re.findall(r'href="/tag/([^"]+)"', page)]
         if not tags:
