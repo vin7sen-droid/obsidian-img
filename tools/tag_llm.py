@@ -15,7 +15,8 @@ KEY_F = "/root/.config/tagllm/key"
 BASE_F = "/root/.config/tagllm/base"
 CACHE = "/root/workspace/bak/tagllm_cache.json"
 DICT = "/root/workspace/tools/tagdict.json"
-MODELS = ["ywd/z-ai/glm-5.3-flash", "ms/deepseek-ai/DeepSeek-V4.1-Flash-1017"]
+MODELS = ["ywd/z-ai/glm-5.3-flash",        # 主：12 条样本 58%/60%，0 空响应
+          "ywd/poolside/laguna-xs-2.1"]       # 备：50%/51% 但 1.5s/篇、0 空响应（比 DeepSeek 稳）
 
 
 def _cred():
