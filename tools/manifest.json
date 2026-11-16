@@ -1,9 +1,9 @@
 {
- "updated": "2026-11-17T04:21:35+08:00",
+ "updated": "2026-11-17T04:36:19+08:00",
  "files": {
   "clip.py": {
-   "sha256": "7b8f3e97a5b5da073110f1bdf923a8475410518d97e03d5e93e2f50e70dae0a8",
-   "bytes": 56274
+   "sha256": "f650ce950f8443a4c6c5b9c4c0f09feef512c923231c7fbcbc23f4afc70a6ec6",
+   "bytes": 57234
   },
   "clip_server.py": {
    "sha256": "3bf38ab5db821c7ca6c67d374f9b06bdaf797d2593ef3773b87d2bab9a438d2a",
@@ -14,8 +14,8 @@
    "bytes": 10855
   },
   "title_fix.py": {
-   "sha256": "c7059be97871d43ced117186aed8737cc053724811c7268c01fa37ea09e5e004",
-   "bytes": 2572
+   "sha256": "37225b742b1d339f86c47afc85e6037e01cbc470572a5c80006de702af52058a",
+   "bytes": 10251
   },
   "bak.py": {
    "sha256": "41d4aba0d935442f894e1f6062eb966a51eb02feee18cf248bef3c81207d94cc",
