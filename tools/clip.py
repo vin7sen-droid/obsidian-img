@@ -1054,6 +1054,7 @@ def main():
                     help="只重抓评论区并替换已有笔记里的 ## 评论区 段，其余内容不动")
     ap.add_argument("--summary", default=None, help="摘要；缺省取正文前 3 段第一个含数字句（2026-11-16 定），找不到回落首段前两句")
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
+    ap.add_argument("--no-tag-suggest", action="store_true", help="不打印标签候选")
     a = ap.parse_args()
     # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
     # 2026-11-16：--stdout 是只读路径（精修/核对原文用），不该有推送副作用
@@ -1281,6 +1282,18 @@ def main():
             localize(path)
         except Exception as e:
             print("图片本地化失败（保留远程链接）:", e)
+    # 标签候选（按历史笔记词典给建议；karakeep curatedTags 思路，2026-11-17）
+    if not getattr(a, "no_tag_suggest", False):
+        try:
+            import subprocess as _sp
+            _sg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_suggest.py")
+            _r = _sp.run([sys.executable, _sg, name, "--brief"],
+                         capture_output=True, text=True, timeout=20)
+            _line = (_r.stdout or "").strip()
+            if _line:
+                print(_line)
+        except Exception:
+            pass
     print(path)
     print("正文 %d 字 / 标签 %s / 评论 %s" % (
         len(body), tags_line or "无",
