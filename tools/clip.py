@@ -989,6 +989,26 @@ def safe_name(title):
     return t or "未命名"
 
 
+def suggest_tags(title_text, n=3):
+    """按历史笔记词典给标签候选（karakeep curatedTags 思路，2026-11-17）。
+    返回 (names, dup_msg, brief)；失败返回 ([], "", "")。"""
+    try:
+        import subprocess as _sp
+        _sg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_suggest.py")
+        _r = _sp.run([sys.executable, _sg, title_text, "--brief"],
+                     capture_output=True, text=True, timeout=20)
+        out = (_r.stdout or "").strip()
+        if not out.startswith("标签候选:"):
+            return [], "", out
+        names = [x.strip() for x in out.split(":", 1)[1].split("|")[0].split("、") if x.strip()]
+        dup = ""
+        if "|" in out:
+            dup = out.split("|", 1)[1].strip().replace("⚠️疑似重复", "⚠️库内已有同题")
+        return names[:n], dup, out
+    except Exception:
+        return [], "", ""
+
+
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
     name = safe_name(doc["title"])
 
@@ -1222,8 +1242,17 @@ def main():
         if not tags:
             nm = re.search(r'href="/go/([^"]+)"[^>]*>([^<]+)</a>', page)
             tags = [strip_tags(nm.group(2))] if nm else []
+    _sg_msg = ""
     if a.tags:
         tags = a.tags.split()
+    elif not getattr(a, "no_tag_suggest", False):
+        # 候选优先于 keywords：候选来自历史笔记（本库已定版的标签），keywords 常是站点分类词
+        _names, _dup, _brief = suggest_tags(title)
+        if _names:
+            tags = _names
+            _sg_msg = "标签候选（自动填初始 tags，精修复核）: " + "、".join(_names)
+        if _dup:
+            _sg_msg = (_sg_msg + " | " if _sg_msg else "") + _dup
     # 2026-11-16：上限从 2 提到 3——标签规则本就是 1-3 个，tags[:2] 会把用户显式给的第三个标签丢掉
     tags_line = " ".join("#" + t.replace(" ", "").lstrip("#") for t in tags[:3] if t.strip())
     cmts = None
@@ -1282,18 +1311,9 @@ def main():
             localize(path)
         except Exception as e:
             print("图片本地化失败（保留远程链接）:", e)
-    # 标签候选（按历史笔记词典给建议；karakeep curatedTags 思路，2026-11-17）
-    if not getattr(a, "no_tag_suggest", False):
-        try:
-            import subprocess as _sp
-            _sg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_suggest.py")
-            _r = _sp.run([sys.executable, _sg, name, "--brief"],
-                         capture_output=True, text=True, timeout=20)
-            _line = (_r.stdout or "").strip()
-            if _line:
-                print(_line)
-        except Exception:
-            pass
+    # 标签候选提示（候选计算在 tags 段已做，这里只打印，避免重复跑）
+    if _sg_msg:
+        print(_sg_msg)
     print(path)
     print("正文 %d 字 / 标签 %s / 评论 %s" % (
         len(body), tags_line or "无",
