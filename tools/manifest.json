@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-17T03:37:14+08:00",
+ "updated": "2026-11-17T03:37:28+08:00",
  "files": {
   "clip.py": {
    "sha256": "b0cc64f254820ab9e1ec18936fe79eab22f44ec21546dd89b714b2b6f927fbbf",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "623577cfaf939fe6b81ff0681ba39dfc5d0d196f4d1dfdef23d03c7606d85398",
-   "bytes": 15134
+   "sha256": "144c260ebc2e28b3c11db2b2ad26e852047f7e2e9bfca752661b224f6b568f8b",
+   "bytes": 15148
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -96,6 +96,10 @@
   "tag_suggest.py": {
    "sha256": "d3bc4a3fc26b31b67808f7078dc80095a3e21a7f7a8b4395c7ab509c4f51b899",
    "bytes": 6721
+  },
+  "tag_llm.py": {
+   "sha256": "78aee339879d1148242c4fe0b257b2eb5a7a7cbe32d1488ec8ffae0357cc46a1",
+   "bytes": 4572
   }
  }
 }
