@@ -439,16 +439,21 @@ export async function crossCheck(res, opts = {}) {
   const failBudget = opts.failBudget ?? 8;
   const deadline = Date.now() + (opts.budgetMs ?? 180000); // 墙钟上限：超时即停止，不让质检拖死管线
   const pairs = [];
+  // 增量人工审（2026-11-16 借鉴 ai-news-daily SKILL.md「增量复核只审新增」）：opts.prevUrls
+  // 是上一版 JSON 的 URL 集；命中的标 isNew=false（存量），人工审清单里存量排后并可略读。
+  const prevSet = opts.prevUrls instanceof Set ? opts.prevUrls
+    : Array.isArray(opts.prevUrls) ? new Set(opts.prevUrls) : null;
   (res.items || []).forEach((it, i) => {
     const zt = stripSocialPrefix(it.title_zh), zs = stripSocialPrefix(it.summary_zh);
-    if (zt && it.title) pairs.push({ kind: "title", idx: i, en: it.title, zh: zt });
-    if (zs && it.summary) pairs.push({ kind: "summary", idx: i, en: it.summary, zh: zs });
+    const isNew = prevSet ? !prevSet.has(it.url) : true;
+    if (zt && it.title) pairs.push({ kind: "title", idx: i, en: it.title, zh: zt, url: it.url, isNew });
+    if (zs && it.summary) pairs.push({ kind: "summary", idx: i, en: it.summary, zh: zs, url: it.url, isNew });
   });
   for (const k of ["hn", "reddit", "x", "weixin"]) {
     ((res.buzz && res.buzz[k]) || []).forEach((b, i) => {
       const en = b.title || b.name || b.text || "";
       const z = stripSocialPrefix(b.title_zh);
-      if (z && en) pairs.push({ kind: "buzz-" + k, idx: i, en, zh: z });
+      if (z && en) pairs.push({ kind: "buzz-" + k, idx: i, en, zh: z, url: b.url || "", isNew: prevSet ? !prevSet.has(b.url || "") : true });
     });
   }
   const ctx = { conc, failBudget, failed: 0, consec: 0, limited: false, deadline };
@@ -511,7 +516,8 @@ export async function crossCheck(res, opts = {}) {
       saveCache();  // 第三票结果落盘（否则 crossCheck 返回后 cacheDirty 丢失，下次重花请求）
     } catch { /* 第三票尽力而为 */ }
   }
-  return { checked, skipped, failed: failures, limited, engine: chain.join("+"), de: ctx.de || null, flagged };
+  return { checked, skipped, failed: failures, limited, engine: chain.join("+"), de: ctx.de || null, flagged,
+    fresh: flagged.filter((f) => f.isNew).length, stale: flagged.filter((f) => !f.isNew).length };
 }
 
 // —— 兜底行补译（2026-11-15 用户定：zh.mjs 按「占位符对账不齐→保留英文」兜底的行，
@@ -573,10 +579,14 @@ export function writeReviewList(dir, stamp, flagged, meta = {}) {
     "",
   ];
   if (meta.checked) lines.splice(3, 0, "> 校验范围：" + meta.checked + " 条已译文本（第二通道未返回 " + (meta.skipped || 0) + " 条，未参与比对）。");
+  const incr = flagged.some((f) => f.isNew === false);   // prevUrls 传入时才有存量/新增之分
+  if (incr) lines.splice(3, 0, "> **增量模式**：" + (meta.fresh ?? flagged.filter((f) => f.isNew).length) + " 条新增（优先精审）· "
+    + (meta.stale ?? flagged.filter((f) => !f.isNew).length) + " 条存量（上一版已含，若此前已人工审过可略读）。");
   const order = { high: 0, mid: 1 };
-  flagged.sort((a, b) => order[a.level] - order[b.level]);
+  flagged.sort((a, b) => (b.isNew === true) - (a.isNew === true) || order[a.level] - order[b.level]);
   flagged.forEach((f, i) => {
-    lines.push("## " + (i + 1) + ". [" + f.level.toUpperCase() + "] " + f.kind + "#" + f.idx + " — " + f.reason);
+    const tag = incr ? (f.isNew ? "[新增] " : "[存量] ") : "";
+    lines.push("## " + (i + 1) + ". " + tag + "[" + f.level.toUpperCase() + "] " + f.kind + "#" + f.idx + " — " + f.reason);
     lines.push("- **原文**：" + f.en);
     lines.push("- **腾讯**：" + f.zh);
     lines.push(f.g ? "- **第二通道**：" + f.g : "- **第二通道**：—（本地质检，未走引擎）");
