@@ -1178,14 +1178,27 @@ def main():
         date += "T00:00:00"
     else:
         # 非 IT之家：从 meta/JSON-LD 里取完整 ISO 时间
+        _hit = False
         for k in ("article:published_time", "datePublished"):
             v = meta(page, k)
             if v and re.match(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", v):
                 date = v.replace(" ", "T")[:19]
+                _hit = True
                 break
             if v and re.match(r"\d{4}-\d{2}-\d{2}$", v):
                 date = v + "T00:00:00"
+                # 只有日期算弱命中：不阻断多源兜底（JSON-LD 常有完整时间）
                 break
+        # 2026-11-17：多源兜底（JSON-LD datePublished → 各类 meta → <time datetime>
+        # → dateModified 兜底）。substack 的 modified 常排在 published 前面，故不能按出现顺序取。
+        if not _hit:
+            try:
+                from title_fix import date_fallback
+                _fb = date_fallback(page)
+                if _fb:
+                    date = _fb
+            except Exception:
+                pass
 
     author = None
     m = re.search(r'<span id="author_baidu">.*?<strong>(.*?)</strong>', page, re.S)
@@ -1194,6 +1207,14 @@ def main():
     author = author or meta(page, "author") or meta(page, "article:author")
     if author and (re.search(r"https?://|facebook|@", author) or len(author) > 40):
         author = None
+    # 2026-11-17：多源兜底（JSON-LD author → meta 各键 → rel=author → class*=author）。
+    # 英文站的作者基本都在 JSON-LD 里，原来只读 meta 所以常缺。
+    if not author:
+        try:
+            from title_fix import author_fallback
+            author = author_fallback(page)
+        except Exception:
+            pass
 
     # V2EX：时间与作者只在 API 里（页面无 meta 发布时间）
     if "v2ex.com" in final:
