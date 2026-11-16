@@ -1237,7 +1237,9 @@ def main():
         print("检测到英文文章：保留英文原文，已标记待精修（由精修队员译成中文）")
 
     kws = meta(page, "keywords") or ""
-    tags = [k.strip() for k in re.split(r"[,，]", kws) if k.strip() and k.strip().lower() not in ("none", "null", "undefined", "na")]
+    _JUNK_TAG = {"业界动态", "IT资讯", "科技", "新闻", "数码", "手机", "电脑", "软件", "硬件", "互联网", "人工智能技术"}
+    tags = [k.strip() for k in re.split(r"[,，]", kws) if k.strip() and k.strip().lower() not in ("none", "null", "undefined", "na")
+            and k.strip() not in _JUNK_TAG]
     if "v2ex.com" in final:                      # V2EX 页面标签是 /tag/xxx 链接
         tags = [urllib.parse.unquote(x) for x in re.findall(r'href="/tag/([^"]+)"', page)]
         if not tags:
