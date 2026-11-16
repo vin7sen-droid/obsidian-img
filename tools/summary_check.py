@@ -69,7 +69,7 @@ process.stdin.on("end", () => {
                             LENMAP[key] = m.trim();   // 反查表：170.18 → 「6.7"」
                             return " " + key + " "; })
     .replace(/(\d(?:\.\d+)?)[\u2010-\u2015-]?(trillion|billion|million|thousand|crore|lakh)\b/gi, "$1 $2") // 连字符隔断量级词：1.6-trillion→1.6 trillion（防 SI 没乘上去）
-    .replace(/\b[xX](86|64)\b/g, " ")              // 架构名 x86/x64
+    .replace(/\b[xX](86|64)\b|\bWin(32|64)\b/g, " ")   // 架构名 x86/x64 与 Win32/Win64
     .replace(/\b[A-Z]{1,3}\d{2,}\b/g, " ")          // 型号 QN10 / KB5132057 / A100
     .replace(/二次开发|二进制|二合一/g, " ")            // 中文习语数字
     ;
