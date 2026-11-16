@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-17T03:37:28+08:00",
+ "updated": "2026-11-17T03:50:31+08:00",
  "files": {
   "clip.py": {
    "sha256": "b0cc64f254820ab9e1ec18936fe79eab22f44ec21546dd89b714b2b6f927fbbf",
@@ -98,8 +98,8 @@
    "bytes": 6721
   },
   "tag_llm.py": {
-   "sha256": "78aee339879d1148242c4fe0b257b2eb5a7a7cbe32d1488ec8ffae0357cc46a1",
-   "bytes": 4572
+   "sha256": "1b4df76525a1cc2150eb8a473d9b4013a5bcfbfcad397281e4c482bc610a2b33",
+   "bytes": 4922
   }
  }
 }
