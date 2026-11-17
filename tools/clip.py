@@ -866,6 +866,134 @@ def _news_comment_count(newsid):
         return None
 
 
+# ---------- Hacker News 评论区（2026-11-17 接入） ----------
+# Algolia items 接口一次返回整棵评论树（children 递归嵌套），无需逐条请求。
+HN_API = "https://hn.algolia.com/api/v1/items/%s"
+HN_MAX_INDENT = 2          # 缩进最多 2 个全角（第 3 层起不再加深，改在头行标 ↳层级）
+
+
+def _hn_clean(s):
+    """HN 评论正文清洗：HTML 实体 + <p>/<a> 处理，保留段落。"""
+    s = htmllib.unescape(s or "")
+    s = re.sub(r"(?i)<a\s[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>",
+               lambda m: "[%s](%s)" % (re.sub(r"<[^>]+>", "", m.group(2)).strip(), m.group(1)), s)
+    s = re.sub(r"(?i)</p>\s*<p[^>]*>", "\n\n", s)
+    s = re.sub(r"(?i)<br\s*/?>", "\n", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in s.split("\n")]
+    out = []
+    for ln in lines:
+        if ln or (out and out[-1]):
+            out.append(ln)
+    return "\n".join(out).strip()
+
+
+_HN_CACHE = {}
+
+
+def _hn_get(sid, tries=3):
+    """Algolia items 接口（默认 fetch 会因大响应 gzip 中断，这里用独立轻头重试）。"""
+    import urllib.request as _u
+    if sid in _HN_CACHE:
+        return _HN_CACHE[sid]
+    url = HN_API % sid
+    for i in range(tries):
+        try:
+            r = _u.urlopen(_u.Request(url, headers={"User-Agent": "dsh-clip/1.0",
+                                                   "Accept": "application/json"}), timeout=40)
+            data = json.loads(r.read().decode("utf-8", "replace"))
+            _HN_CACHE[sid] = data
+            return data
+        except Exception as e:
+            if i == tries - 1:
+                print("HN 评论接口失败：%s" % e)
+                return None
+            time.sleep(2 + 2 * i)
+    return None
+
+
+def _hn_count(node):
+    n = 0
+    for c in (node.get("children") or []):
+        n += 1 + _hn_count(c)
+    return n
+
+
+def hn_story(hn_url):
+    """HN item 帖的元信息：标题 / 指向的原文链接 / 分数 / 提交者 / 日期。"""
+    m = re.search(r"[?&]id=(\d+)", hn_url)
+    if not m:
+        return None
+    d = _hn_get(m.group(1))
+    if not d:
+        return None
+    if d.get("type") not in (None, "story"):
+        return None
+    return {"id": m.group(1),
+            "title": htmllib.unescape(d.get("title") or ""),
+            "url": d.get("url") or "",
+            "points": d.get("points") or 0,
+            "by": d.get("author") or "",
+            "when": (d.get("created_at") or "")[:10],
+            "comments": _hn_count(d),
+            "text": _hn_clean(d.get("text") or "")}
+
+
+def hn_comments(url):
+    """抓 HN 帖的全部评论（含楼中楼），按原站层级顺序铺平。"""
+    m = re.search(r"[?&]id=(\d+)", url) or re.search(r"/item/(\d+)", url)
+    if not m:
+        return None
+    data = _hn_get(m.group(1))
+    if not data:
+        return None
+    rows = []
+
+    def walk(node, depth):
+        for c in (node.get("children") or []):
+            txt = _hn_clean(c.get("text") or "")
+            kids = c.get("children") or []
+            if not txt and not kids:      # 已删除的楼层
+                continue
+            rows.append({"depth": depth,
+                         "author": c.get("author") or "匿名",
+                         "when": (c.get("created_at") or "")[:10],
+                         "text": txt})
+            walk(c, depth + 1)
+
+    walk(data, 0)
+    if not rows:
+        return None
+    return {"main": rows, "extra": [], "source": "hn", "endHint": None,
+            "story": data.get("title") or "", "hn_url": url,
+            "points": data.get("points") or 0}
+
+
+def hn_comments_section(cm):
+    rows = cm["main"]
+    deep = sum(1 for c in rows if c["depth"] > HN_MAX_INDENT)
+    note = "HN 全部评论 %d 条，按原站层级；缩进最多 %d 层" % (len(rows), HN_MAX_INDENT)
+    if deep:
+        note += "，更深的 %d 条用 ↳层级 标注" % deep
+    link = "讨论页：[%s](%s)（%d 分）。" % (cm.get("story") or "Hacker News",
+                                             cm.get("hn_url") or "", cm.get("points") or 0)
+    out = ["## 评论区（%d 条）" % len(rows), "", link, "", note + "。", ""]
+    for c in rows:
+        d = c["depth"]
+        pad = INDENT * min(d, HN_MAX_INDENT)
+        mark = "" if d <= HN_MAX_INDENT else "↳%d " % d
+        head = "%s**%s%s · %s**" % (pad, mark, c["author"], c["when"])
+        txt = c["text"] or "（无正文）"
+        if d == 0:
+            if out[-1] != "":
+                out.append("")
+            out += [head, ""] + txt.split("\n")
+        else:
+            out.append(head)
+            out += [pad + ln if ln else ln for ln in txt.split("\n")]
+    return "\n".join(out).rstrip()
+
+
 def comments_section(cmts):
     main, extra = cmts["main"], cmts["extra"]
     kids = sum(len(c.get("children") or []) for c in main)
@@ -1074,6 +1202,8 @@ def build(doc, url, tags_line, summary, body, cmts, auto=False):
             if n:
                 note += "（页面显示 %d 条）" % n
             parts = parts + ["", "---", "", "评论区：" + note + "。", ""]
+    elif cmts and cmts.get("source") == "hn":
+        parts += ["", "---", "", hn_comments_section(cmts)]
     elif cmts and (cmts["main"] or cmts["extra"]):
         parts += ["", "---", "", comments_section(cmts)]
     return name, "\n".join(parts).rstrip() + "\n"
@@ -1124,6 +1254,21 @@ def main():
             pass
 
     page, final = fetch(a.url)
+
+    # HN 讨论帖：正文用帖子指向的原文页（HN 页本身只有列表），评论走 Algolia
+    _hn_url = None
+    _hn_meta = None
+    if "news.ycombinator.com" in final:
+        _hn_meta = hn_story(final)
+        if _hn_meta:
+            _hn_url = final
+            if _hn_meta["url"]:
+                try:
+                    page, final = fetch(_hn_meta["url"])
+                except Exception as _e:
+                    print("HN 原文页抓取失败（%s），正文改为讨论帖摘要" % _e)
+            if not _hn_meta["url"] or "news.ycombinator.com" in final:
+                page, final = "<html></html>", _hn_url
 
     if a.refresh_comments:
         path_f = os.path.join(a.out, a.name + ".md") if a.name else None
@@ -1182,6 +1327,8 @@ def main():
             pass
     title = title or "未命名"
     title = re.sub(r"\s*[-_|]\s*(IT之家|少数派|36氪|V2EX).*$", "", title).strip()
+    if _hn_meta and _hn_meta["title"]:
+        title = _hn_meta["title"]
 
     pub = None
     m = re.search(r'<span id="pubtime_baidu">(.*?)</span>', page)
@@ -1234,6 +1381,8 @@ def main():
             except Exception:
                 pass
 
+    if _hn_meta and _hn_meta["when"]:
+        date = _hn_meta["when"]
     author = None
     m = re.search(r'<span id="author_baidu">.*?<strong>(.*?)</strong>', page, re.S)
     if m:
@@ -1305,6 +1454,14 @@ def main():
         # 2026-11-16：只有 extract_ithome 的原始 md 需要这一步；双跑取长路径原来会
         # 对已经清洗过的正文再跑一次全量正则（8 万字的稿子白跑一遍，且二次去重/截断有副作用）
         body = clean_body(body, title)
+    if _hn_meta and not body.strip():
+        # HN 帖没有外链正文（Ask HN / 抓不到原文）：退化为帖内说明 + 原文链接
+        _t = _hn_meta["title"]
+        body = "HN 讨论帖：%s（%d 分，%d 条评论）。" % (_t, _hn_meta["points"], _hn_meta.get("comments") or 0)
+        if _hn_meta["url"]:
+            body += "\n\n原文：[%s](%s)" % (_t, _hn_meta["url"])
+        if _hn_meta["text"]:
+            body += "\n\n" + _hn_meta["text"]
     body = fix_hotlinks(body)
 
     # 英文文章不自动翻译：只检测并强制标记待精修，由精修队员译中（2026-11-12 用户决定）
@@ -1362,6 +1519,8 @@ def main():
             cmts = mydrivers_comments(final)
         elif "v2ex.com" in final:
             cmts = v2ex_comments(final)
+        elif _hn_url or "news.ycombinator.com" in final:
+            cmts = hn_comments(_hn_url or final)
 
     doc = {"title": title, "pub": pub, "date": date, "author": author, "desc": meta(page, "description")}
 
