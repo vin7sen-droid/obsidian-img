@@ -885,7 +885,11 @@ def _hn_clean(s):
     for ln in lines:
         if ln or (out and out[-1]):
             out.append(ln)
-    return "\n".join(out).strip()
+    txt = "\n".join(out).strip()
+    # 2026-11-17：HN 评论常写「interesting!<a>链接</a>」，转成 markdown 后成了
+    # 「![文字](url)」——会被当成图片下载/上传。断开感叹号与方括号。
+    txt = re.sub(r"!\[", "! [", txt)
+    return txt
 
 
 _HN_CACHE = {}
