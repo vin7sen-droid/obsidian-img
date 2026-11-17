@@ -871,8 +871,8 @@ def _news_comment_count(newsid):
 HN_API = "https://hn.algolia.com/api/v1/items/%s"
 HN_MAX_INDENT = 2          # 缩进最多 2 个全角（第 3 层起不再加深，改在头行标 ↳层级）
 HN_DEEP_LIMIT = 200        # 楼层超过此数后只保留主楼层（用户 2026-11-17 定）
-HN_PICK_MIN = 3.0          # 楼中楼入选分数阈值（用户 2026-11-17 定「主楼全收 + 精选楼中楼」）
-HN_PICK_LIMIT = 80         # 精选楼中楼上限
+HN_PICK_MIN = 2.0          # 楼中楼入选分数阈值（2026-11-17 实测 3.0→2.0：增量仅 5% 体积多为技术澄清，上限兜底）
+HN_PICK_LIMIT = 120        # 精选楼中楼上限（真正的量闸：阈值只定及格线，上限防大帖爆量）
 HN_KARMA_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "..", "bak", "hn_karma.json")
 
@@ -948,7 +948,7 @@ def hn_story(hn_url):
             "text": _hn_clean(d.get("text") or "")}
 
 
-def _hn_karma(authors, budget=60):
+def _hn_karma(authors, budget=None):
     """批量取作者 karma（有本地缓存；预算内限次，失败静默返回空）。"""
     cache = {}
     try:
@@ -956,14 +956,17 @@ def _hn_karma(authors, budget=60):
             cache = json.load(open(HN_KARMA_CACHE, encoding="utf-8"))
     except Exception:
         cache = {}
-    todo = [a for a in authors if a and a not in cache][:budget]
+    todo = [a for a in authors if a and a not in cache]
+    if budget:
+        todo = todo[:budget]
     for a in todo:
         try:
             d = _hn_get_soft("https://hn.algolia.com/api/v1/users/%s" % a)
-            cache[a] = int((d or {}).get("karma") or 0)
+            if d:
+                cache[a] = int(d.get("karma") or 0)
         except Exception:
-            cache[a] = 0
-        time.sleep(0.12)
+            pass          # 失败不写缓存，下次再试（写 0 会永久压低该作者的分数）
+        time.sleep(0.08)
     if todo:
         try:
             os.makedirs(os.path.dirname(HN_KARMA_CACHE), exist_ok=True)
