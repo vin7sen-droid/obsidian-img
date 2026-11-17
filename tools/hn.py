@@ -25,7 +25,8 @@ API 匿名免 key、直连可用（无需代理）：
   2. URL 一律用返回的原始 url 字段（无 url 用 item?id=），手拼 slug 全 404；
   3. 高票常是旧文复活，created_at_i 是发帖时间非原文日期；
   4. Algolia 默认按相关性排序，points 降序要自己 sorted；
-  5. hitsPerPage 必须显式给 60（默认 20 会截断）；
+  5. hitsPerPage 默认 20 会截断——本脚本按 200/页自动翻页拉 nbHits（2026-11-17 修：
+     旧版写死 60 且只取一页，--limit>60 会静默截断，实测 7 天窗口真值 330 只回 60）；
   6. daemonology hn-daily 对数据中心 IP 间歇 TLS RST，别用它，本脚本才是主通道。
 """
 import json, os, re, sys, time, urllib.request, urllib.parse
@@ -67,6 +68,32 @@ def parse_window(argv):
     return int(t0), int(datetime.now(CST).timestamp()), datetime.fromtimestamp(t0, CST)
 
 
+def fetch_hits(t0, t1, points, want, per=200, max_pages=10):
+    """分页拉 Algolia hits（2026-11-17 修：hitsPerPage 硬编码 60 + 只请求一页 → --limit>60 静默截断）。
+    want = 过滤后还想留的条数，原始命中按 3 倍余量拉；返回 (hits, nbHits)。"""
+    need = max(60, want * 3)
+    out, nb, page = [], None, 0
+    while True:
+        q = urllib.parse.urlencode({
+            "tags": "story",
+            "numericFilters": f"created_at_i>{t0},created_at_i<{t1},points>{points}",
+            "hitsPerPage": per,
+            "page": page,
+        })
+        req = urllib.request.Request(f"{API}?{q}", headers={"User-Agent": "Mozilla/5.0"})
+        d = json.load(urllib.request.urlopen(req, timeout=20))
+        if nb is None:
+            nb = d.get("nbHits") or 0
+        hs = d.get("hits") or []
+        if not hs:
+            break
+        out.extend(hs)
+        page += 1
+        if len(out) >= nb or len(out) >= need or page >= max_pages:
+            break
+    return out[:need], nb
+
+
 def main():
     argv = sys.argv
     if not hasflag(argv, "--since", "--date"):
@@ -79,13 +106,7 @@ def main():
     if ai_mode not in ("filter", "tag", "off"):
         sys.exit("--ai 只接受 filter|tag|off")
 
-    q = urllib.parse.urlencode({
-        "tags": "story",
-        "numericFilters": f"created_at_i>{t0},created_at_i<{t1},points>{points}",
-        "hitsPerPage": 60,
-    })
-    req = urllib.request.Request(f"{API}?{q}", headers={"User-Agent": "Mozilla/5.0"})
-    hits = json.load(urllib.request.urlopen(req, timeout=20))["hits"]
+    hits, nb_hits = fetch_hits(t0, t1, points, limit)
     hits.sort(key=lambda h: -h.get("points", 0))
 
     items = []
@@ -132,7 +153,8 @@ def main():
     ai_n = sum(1 for it in items if it["is_ai"])
     mode_txt = {"filter": "AI 主体", "tag": "全量（is_ai 打标）", "off": "全量"}[ai_mode]
     print(f"HN Algolia: 窗口 {since_dt.strftime('%m-%d %H:%M')} 起, points>{points} → {mode_txt} {len(items)} 条"
-          + (f"（其中 AI {ai_n} 条）" if ai_mode != "filter" else ""), file=sys.stderr)
+          + (f"（其中 AI {ai_n} 条）" if ai_mode != "filter" else "")
+          + f" ｜窗口命中 {nb_hits} 条，分页取 {len(hits)} 条", file=sys.stderr)
     for it in items:
         mark = " [AI]" if (ai_mode != "filter" and it["is_ai"]) else ""
         print(f"  [{it['points']}★/{it['comments']}评] {it['title'][:72]}  {it['date']}{mark}", file=sys.stderr)
