@@ -29,12 +29,14 @@ def is_code_line(s):
     """缩进块 + 「符号密度高」的裸代码行（邮件/技术稿里的 shell 片段常顶格写）。"""
     if not s.strip():
         return False
-    if re.match(r"^(\s{4,}|\t)", s):
+    if re.match(r"^([ ]{4,}|\t)", s):     # 只认 ASCII 缩进：全角空格是楼中楼缩进，不是代码
         return True
     if re.match(r"^\S+=\S", s):          # KEY=value 赋值行
         return True
+    if len(s) > 160:                       # 长段落不判代码（评论长句常带括号被误伤）
+        return False
     n = sum(1 for c in s if c in _SYM)
-    return n >= 3 and n / max(len(s), 1) >= 0.08
+    return n >= 4 and n / max(len(s), 1) >= 0.10
 
 
 def protect(lines):
@@ -58,11 +60,37 @@ def fix_headings(line):
     return "%s %s" % (m.group(1), m.group(2)) if m else line
 
 
+MAXLEN = 320            # 单行上限：引擎对 500+ 字符的单行常整行不翻（实测 530 字符直接放弃）
+
+
+def _split_long(s):
+    if len(s) <= MAXLEN:
+        return [s]
+    parts, cur = [], ""
+    for piece in re.split(r"(?<=[.!?;:。！？；：])\s*", s):
+        if not piece:
+            continue
+        if cur and len(cur) + len(piece) > MAXLEN:
+            parts.append(cur)
+            cur = piece
+        else:
+            cur += piece
+    if cur:
+        parts.append(cur)
+    return parts
+
+
 def translate_lines(lines):
+    """逐行翻译；超长行先按句切成多段再翻（引擎对长单行会整行放弃），翻完拼回。"""
     if not lines:
         return []
+    owner, expanded = [], []
+    for i, ln in enumerate(lines):
+        for piece in _split_long(ln):
+            owner.append(i)
+            expanded.append(piece)
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        f.write("\n".join(expanded))
         src = f.name
     try:
         out = subprocess.run(["node", ZH, "-f", src], capture_output=True, text=True,
@@ -72,9 +100,12 @@ def translate_lines(lines):
         zh = out.stdout.split("\n")
     finally:
         os.unlink(src)
-    if len(zh) < len(lines):
-        zh += [""] * (len(lines) - len(zh))
-    return zh[:len(lines)]
+    if len(zh) < len(expanded):
+        zh += [""] * (len(expanded) - len(zh))
+    merged = [""] * len(lines)
+    for k, i in enumerate(owner):
+        merged[i] += zh[k]
+    return merged
 
 
 def main():
