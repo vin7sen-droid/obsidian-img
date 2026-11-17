@@ -309,6 +309,14 @@ def rollback(ts=None):
 
 
 def main():
+    # 入口守卫：未知选项一律报错，绝不静默回落 auto（02:00 传错参数曾触发一轮同步）
+    argv = sys.argv[1:]
+    unknown = [a for a in argv if a.startswith("-") and a != "--quiet"]
+    pos = [a for a in argv if not a.startswith("-")]
+    if unknown:
+        sys.stderr.write("未知选项：%s\n用法：gh_sync.py [push|pull|sync|auto|status|rollback [时间戳]] [--quiet]\n"
+                         % " ".join(unknown))
+        return 2
     # 自愈清理：旧版 pull 曾把 @ 下载器误拉进 tools/（remote_name 重名副本）——删掉，
     # workspace 根才是真身。幂等：不存在则零动作。
     for f in FILES:
@@ -326,7 +334,7 @@ def main():
         log("sync：另一实例运行中，跳过")
         return 0
     try:
-        cmd = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "auto"
+        cmd = pos[0] if pos else "auto"
         if cmd == "auto":
             # 本机（权威源，有 .sync-master 标志）只推；跟随端只拉——同顺序双向会互相覆盖
             cmd = "push" if os.path.exists(MASTER_MARK) else "pull"
@@ -339,7 +347,7 @@ def main():
         if cmd == "status":
             return status()
         if cmd == "rollback":
-            return rollback(sys.argv[2] if len(sys.argv) > 2 else None)
+            return rollback(pos[1] if len(pos) > 1 else None)
         if cmd == "push":
             return push()
         if cmd == "pull":
