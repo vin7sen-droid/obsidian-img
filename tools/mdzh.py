@@ -105,7 +105,15 @@ def translate_lines(lines):
     merged = [""] * len(lines)
     for k, i in enumerate(owner):
         merged[i] += zh[k]
-    return merged
+    return [_postfix(x) for x in merged]
+
+
+def _postfix(s):
+    """引擎高频小错统一修（只改确定性的，不动语义）。"""
+    s = re.sub(r"(\d)百分比", r"\1%", s)               # 37.92百分比 → 37.92%
+    s = s.replace("蒙特卡罗", "蒙特卡洛")
+    s = re.sub(r"(\d{2})：(\d{2})：(\d{2})", r"\1:\2:\3", s)   # 时间里的全角冒号
+    return s
 
 
 def main():
