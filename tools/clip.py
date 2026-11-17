@@ -26,7 +26,7 @@
 import argparse, gzip, hashlib, html as htmllib, json, os, re, shutil, subprocess, sys, time, zlib
 import urllib.request
 import trans
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 try:
     import trafilatura
@@ -871,6 +871,10 @@ def _news_comment_count(newsid):
 HN_API = "https://hn.algolia.com/api/v1/items/%s"
 HN_MAX_INDENT = 2          # 缩进最多 2 个全角（第 3 层起不再加深，改在头行标 ↳层级）
 HN_DEEP_LIMIT = 200        # 楼层超过此数后只保留主楼层（用户 2026-11-17 定）
+HN_PICK_MIN = 3.0          # 楼中楼入选分数阈值（用户 2026-11-17 定「主楼全收 + 精选楼中楼」）
+HN_PICK_LIMIT = 80         # 精选楼中楼上限
+HN_KARMA_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "..", "bak", "hn_karma.json")
 
 
 def _hn_clean(s):
@@ -944,8 +948,108 @@ def hn_story(hn_url):
             "text": _hn_clean(d.get("text") or "")}
 
 
-def hn_comments(url):
-    """抓 HN 帖的全部评论（含楼中楼），按原站层级顺序铺平。"""
+def _hn_karma(authors, budget=60):
+    """批量取作者 karma（有本地缓存；预算内限次，失败静默返回空）。"""
+    cache = {}
+    try:
+        if os.path.exists(HN_KARMA_CACHE):
+            cache = json.load(open(HN_KARMA_CACHE, encoding="utf-8"))
+    except Exception:
+        cache = {}
+    todo = [a for a in authors if a and a not in cache][:budget]
+    for a in todo:
+        try:
+            d = _hn_get_soft("https://hn.algolia.com/api/v1/users/%s" % a)
+            cache[a] = int((d or {}).get("karma") or 0)
+        except Exception:
+            cache[a] = 0
+        time.sleep(0.12)
+    if todo:
+        try:
+            os.makedirs(os.path.dirname(HN_KARMA_CACHE), exist_ok=True)
+            json.dump(cache, open(HN_KARMA_CACHE, "w", encoding="utf-8"), ensure_ascii=False)
+        except Exception:
+            pass
+    return cache
+
+
+def _hn_get_soft(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "dsh-clip/1.0",
+                                              "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)
+
+
+def _hn_score(r, story_ts, karma=None):
+    """楼中楼性价比打分（HN 没有单条赞数，只能用代理信号；用户 2026-11-17 定）。"""
+    t = r.get("text") or ""
+    L = len(t)
+    s = 0.0
+    if L >= 400:
+        s += 2
+    elif L >= 200:
+        s += 1
+    elif L < 100:
+        s -= 1
+    d = r.get("depth") or 0
+    s += 2 if d == 1 else (1 if d == 2 else (-2 if d >= 4 else 0))
+    k = r.get("children") or 0
+    s += 2 if k >= 2 else (1 if k == 1 else 0)
+    if ("](" in t) or ("\n    " in t) or ("$ " in t):
+        s += 1
+    km = (karma or {}).get(r.get("author") or "", 0)
+    if km >= 5000:
+        s += 1
+    elif km >= 1000:
+        s += 0.5
+    try:
+        dt = datetime.fromisoformat((r.get("created") or "").replace("Z", "+00:00"))
+        if (dt - story_ts).total_seconds() <= 6 * 3600:
+            s += 0.5
+    except Exception:
+        pass
+    return s
+
+
+def _hn_pick(rows):
+    """返回入选下标集合：主楼全收 + 楼中楼 score>=阈值（补齐父链，超上限按分数截断）。"""
+    try:
+        story_ts = datetime.fromisoformat((rows[0].get("created") or "").replace("Z", "+00:00"))
+    except Exception:
+        story_ts = datetime.now(timezone.utc)
+    subs = [i for i, r in enumerate(rows) if (r.get("depth") or 0) >= 1]
+    if not subs:
+        return set(range(len(rows)))
+    # karma 只查「有希望入选」的作者，控制耗时
+    cand = [rows[i] for i in subs if len(rows[i].get("text") or "") >= 200
+            or (rows[i].get("children") or 0) >= 1]
+    karma = _hn_karma(sorted({c.get("author") for c in cand if c.get("author")}))
+    for i in subs:
+        rows[i]["score"] = _hn_score(rows[i], story_ts, karma)
+    picked = [i for i in subs if rows[i]["score"] >= HN_PICK_MIN]
+    picked.sort(key=lambda i: -rows[i]["score"])
+    if len(picked) > HN_PICK_LIMIT:
+        picked = picked[:HN_PICK_LIMIT]
+    keep = {i for i, r in enumerate(rows) if (r.get("depth") or 0) == 0} | set(picked)
+    parent, stack = {}, []
+    for i, r in enumerate(rows):
+        while stack and (rows[stack[-1]].get("depth") or 0) >= (r.get("depth") or 0):
+            stack.pop()
+        parent[i] = stack[-1] if stack else None
+        stack.append(i)
+    changed = True
+    while changed:
+        changed = False
+        for i in list(keep):
+            pi = parent.get(i)
+            if pi is not None and pi not in keep:
+                keep.add(pi)
+                changed = True
+    return keep
+
+
+def hn_comments(url, deep="pick"):
+    """抓 HN 帖评论（含楼中楼）。deep="pick" 主楼全收+精选楼中楼；deep="all" 全量不筛。"""
     m = re.search(r"[?&]id=(\d+)", url) or re.search(r"/item/(\d+)", url)
     if not m:
         return None
@@ -963,6 +1067,8 @@ def hn_comments(url):
             rows.append({"depth": depth,
                          "author": c.get("author") or "匿名",
                          "when": (c.get("created_at") or "")[:10],
+                         "created": c.get("created_at") or "",
+                         "children": len(kids),
                          "text": txt})
             walk(c, depth + 1)
 
@@ -972,34 +1078,55 @@ def hn_comments(url):
     _trimmed = len(rows) > HN_DEEP_LIMIT
     if _trimmed:
         rows = [r for i, r in enumerate(rows) if i < HN_DEEP_LIMIT or r["depth"] == 0]
-    return {"main": rows, "extra": [], "source": "hn", "endHint": None,
-            "story": data.get("title") or "", "hn_url": url,
-            "points": data.get("points") or 0, "trimmed": _trimmed}
+    all_rows = rows
+    raw_sub = sum(1 for r in all_rows if r["depth"] >= 1)
+    main_rows, picked = all_rows, False
+    if deep != "all" and raw_sub:
+        keep = _hn_pick(all_rows)
+        main_rows = [r for i, r in enumerate(all_rows) if i in keep]
+        picked = len(main_rows) < len(all_rows)
+    return {"main": main_rows, "all_rows": all_rows, "extra": [], "source": "hn",
+            "endHint": None, "story": data.get("title") or "", "hn_url": url,
+            "points": data.get("points") or 0, "trimmed": _trimmed,
+            "picked": picked, "raw_count": len(all_rows), "raw_sub": raw_sub,
+            "kept_sub": sum(1 for r in main_rows if r["depth"] >= 1)}
 
 
-def hn_comments_section(cm):
-    rows = cm["main"]
+def hn_comments_section(cm, note_only=False):
+    rows = cm.get("main") or []
     deep = sum(1 for c in rows if c["depth"] > HN_MAX_INDENT)
+    if cm.get("picked"):
+        head = "## 评论区（%d 条：主楼 %d + 精选楼中楼 %d）" % (
+            len(rows), sum(1 for c in rows if c["depth"] == 0), cm.get("kept_sub") or 0)
+    else:
+        head = "## 评论区（%d 条）" % len(rows)
     note = "HN 评论 %d 条，按原站层级；缩进最多 %d 层" % (len(rows), HN_MAX_INDENT)
     if deep:
         note += "，更深的 %d 条用 ↳层级 标注" % deep
     if cm.get("trimmed"):
         note += "；超过 %d 条后只保留主楼层" % HN_DEEP_LIMIT
+    if cm.get("picked"):
+        note += ("。**楼中楼已筛选**：主楼层全收，楼中楼按「长度 / 深度 / 被回复数 / 作者 karma / "
+                 "带链接或代码 / 发帖后 6 小时内」打分，取 score≥%.0f 并补齐父链，保留 %d 条"
+                 "（原始 %d 条）；全量未筛选、未翻译的英文底稿见同目录 `_底稿/`。"
+                 % (HN_PICK_MIN, cm.get("kept_sub") or 0, cm.get("raw_sub") or 0))
     link = "讨论页：[%s](%s)（%d 分）。" % (cm.get("story") or "Hacker News",
                                              cm.get("hn_url") or "", cm.get("points") or 0)
-    out = ["## 评论区（%d 条）" % len(rows), "", link, "", note + "。", ""]
+    out = [head, "", link, "", note + ".", ""]
+    if note_only:
+        return "\n".join(out).rstrip()
     for c in rows:
         d = c["depth"]
         pad = INDENT * min(d, HN_MAX_INDENT)
         mark = "" if d <= HN_MAX_INDENT else "↳%d " % d
-        head = "%s**%s%s · %s**" % (pad, mark, c["author"], c["when"])
+        head_l = "%s**%s%s · %s**" % (pad, mark, c["author"], c["when"])
         txt = c["text"] or "（无正文）"
         if d == 0:
             if out[-1] != "":
                 out.append("")
-            out += [head, ""] + txt.split("\n")
+            out += [head_l, ""] + txt.split("\n")
         else:
-            out.append(head)
+            out.append(head_l)
             out += [pad + ln if ln else ln for ln in txt.split("\n")]
     return "\n".join(out).rstrip()
 
@@ -1250,6 +1377,8 @@ def main():
     ap.add_argument("--summary", default=None, help="摘要；缺省取正文前 3 段第一个含数字句（2026-11-16 定），找不到回落首段前两句")
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
     ap.add_argument("--no-tag-suggest", action="store_true", help="不打印标签候选")
+    ap.add_argument("--deep", default="pick", choices=["pick", "all"],
+                    help="Hacker News 楼中楼：pick=精选（默认，主楼全收+打分筛选+另存全量底稿）／all=全量不筛")
     a = ap.parse_args()
     # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
     # 2026-11-16：--stdout 是只读路径（精修/核对原文用），不该有推送副作用
@@ -1530,7 +1659,7 @@ def main():
         elif "v2ex.com" in final:
             cmts = v2ex_comments(final)
         elif _hn_url or "news.ycombinator.com" in final:
-            cmts = hn_comments(_hn_url or final)
+            cmts = hn_comments(_hn_url or final, deep=getattr(a, "deep", "pick"))
 
     doc = {"title": title, "pub": pub, "date": date, "author": author, "desc": meta(page, "description")}
 
@@ -1562,6 +1691,30 @@ def main():
     path = os.path.join(a.out, name + ".md")
     _bk = _backup_or_die(path)
     _write_text(path, md)
+    # HN 精选模式下另存全量底稿（未筛选、未翻译），放 _底稿/ 子目录，不混进笔记列表
+    if cmts and cmts.get("source") == "hn" and cmts.get("picked"):
+        try:
+            _rows = cmts.get("all_rows") or []
+            _c2 = dict(cmts)
+            _c2["main"] = _rows
+            _c2["picked"] = False
+            _sec = hn_comments_section(_c2)
+            _fm = ["---", "created: %s" % (doc.get("date") or datetime.now().strftime("%Y-%m-%d")),
+                   "url: %s" % final, "---", ""]
+            tag_list = [t.lstrip("#").strip() for t in (tags_line or "").split() if t.lstrip("#").strip()]
+            if tag_list:
+                _fm = _fm[:-1] + ["tags:"] + ["  - %s" % t for t in tag_list] + ["---", ""]
+            _note = ["> 评论全量底稿：%d 条评论全部英文原文，未筛选、未翻译。" % len(_rows),
+                     "> 阅读版（主楼全收 + 精选楼中楼 %d 条，中文）见 `%s.md`。" % (cmts.get("kept_sub") or 0, name), ""]
+            _draft = "\n".join(_fm + ["# %s" % doc["title"], ""] + _note + [_sec]) + "\n"
+            _ddir = os.path.join(a.out, "_底稿")
+            os.makedirs(_ddir, exist_ok=True)
+            _dpath = os.path.join(_ddir, name + "_评论全量.md")
+            _backup_or_die(_dpath)
+            _write_text(_dpath, _draft)
+            print("评论全量底稿 → %s" % _dpath)
+        except Exception as _e:
+            print("底稿写入失败（不影响笔记）：%s" % _e)
     if not a.local_images:
         # 图片托管到 GitHub（gh-proxy 加速），失败不阻断剪藏
         try:
