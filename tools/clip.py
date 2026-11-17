@@ -828,26 +828,6 @@ def _floor(c):
 
 
 INDENT = "\u3000\u3000"  # 楼中楼缩进（两个全角空格，markdown 安全）
-IT_MAX_INDENT = 99     # IT之家/快科技：按数据实际层数缩进、不人为截断（2026-11-18 用户定「按支持的最大层数」）
-
-
-def _kid_depths(c):
-    """IT之家/快科技的子楼：接口只给一层扁平 children，用 replyUserInfo 推断层级。
-    某条子楼回复的对象若是同一主楼下的另一条子楼，就记为它的下一层。"""
-    kids = c.get("children") or []
-    main_nick = ((c.get("userInfo") or {}).get("userNick") or "").strip()
-    depths = []
-    for i, k in enumerate(kids):
-        rt = ((k.get("replyUserInfo") or {}).get("userNick") or "").strip()
-        d = 1
-        if rt and rt != main_nick:
-            for j in range(i - 1, -1, -1):
-                nick_j = ((kids[j].get("userInfo") or {}).get("userNick") or "").strip()
-                if nick_j and nick_j == rt:
-                    d = depths[j] + 1
-                    break
-        depths.append(d)
-    return list(zip(kids, depths))
 
 
 def _entry(c, prefix="", zoom=False):
@@ -863,16 +843,14 @@ def _entry(c, prefix="", zoom=False):
         head = '<span style="font-size:1.12em">%s</span>' % head
         body_txt = '<span style="font-size:1.12em">%s</span>' % body_txt
     out = [head, "", body_txt, ""]
-    for k, d in _kid_depths(c):
+    for k in (c.get("children") or []):
         kn = (k.get("userInfo") or {}).get("userNick") or "匿名"
         ru = (k.get("replyUserInfo") or {}).get("userNick")
-        pad = INDENT * min(d, IT_MAX_INDENT)   # d 即实际推断层级，不截断
-        mark = ""
-        who = mark + "↳ " + kn + (" 回复 " + ru if ru else "")
+        who = "↳ " + kn + (" 回复 " + ru if ru else "")
         kb = _ctxt(k) or "（图片评论）"
-        kb = "\n".join(pad + ln for ln in kb.split("\n"))
+        kb = "\n".join(INDENT + ln for ln in kb.split("\n"))
         # 紧凑：楼中楼头行与正文连续两行，条目之间不空行（用户 2026-11-14 定）
-        out += [pad + "**%s** · %s · 赞 %s" % (who, _when(k), k.get("support", 0)), kb]
+        out += [INDENT + "**%s** · %s · 赞 %s" % (who, _when(k), k.get("support", 0)), kb]
     return "\n".join(out).rstrip()
 
 
@@ -1191,8 +1169,9 @@ _ZOOM_OPEN = '<span style="font-size:1.12em">'
 
 def _is_item_start(ln):
     """条目头：普通评论以 ** 开头；置顶热评整行被 span 包裹"""
-    s = ln.lstrip("\u3000")
-    return (s.startswith("**") or ln.startswith(_ZOOM_OPEN + "**"))
+    return (ln.startswith("**")
+            or ln.startswith(INDENT + "**")
+            or ln.startswith(_ZOOM_OPEN + "**"))
 
 
 def _split_items(text):
