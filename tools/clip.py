@@ -828,7 +828,7 @@ def _floor(c):
 
 
 INDENT = "\u3000\u3000"  # 楼中楼缩进（两个全角空格，markdown 安全）
-IT_MAX_INDENT = 3      # IT之家/快科技：最多缩进 3 层（2026-11-18 用户要 3 层），更深用 ↳N 标注
+IT_MAX_INDENT = 99     # IT之家/快科技：按数据实际层数缩进、不人为截断（2026-11-18 用户定「按支持的最大层数」）
 
 
 def _kid_depths(c):
@@ -866,8 +866,8 @@ def _entry(c, prefix="", zoom=False):
     for k, d in _kid_depths(c):
         kn = (k.get("userInfo") or {}).get("userNick") or "匿名"
         ru = (k.get("replyUserInfo") or {}).get("userNick")
-        pad = INDENT * min(d, IT_MAX_INDENT)
-        mark = "" if d <= IT_MAX_INDENT else "↳%d " % d
+        pad = INDENT * min(d, IT_MAX_INDENT)   # d 即实际推断层级，不截断
+        mark = ""
         who = mark + "↳ " + kn + (" 回复 " + ru if ru else "")
         kb = _ctxt(k) or "（图片评论）"
         kb = "\n".join(pad + ln for ln in kb.split("\n"))
