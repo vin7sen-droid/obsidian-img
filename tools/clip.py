@@ -1312,6 +1312,240 @@ def suggest_tags(title_text, n=3):
         return [], "", ""
 
 
+# ─────────────────────── Reddit（2026-11-17 接入） ───────────────────────
+# reddit.com 本体对本机出口 IP 全 403（.json / .rss / 网页均 Blocked），
+# 改走 Photon 归档 arctic-shift（主）与 pullpush（兜底），两者都带真实赞数。
+REDDIT_ARCTIC = "https://arctic-shift.photon-reddit.com/api"
+REDDIT_PULLPUSH = "https://api.pullpush.io/reddit/search"
+REDDIT_PICK_MIN = 2        # 楼中楼入选门槛（真实赞数，不是代理分）
+REDDIT_PICK_LIMIT = 120    # 楼中楼上限
+REDDIT_MAIN_MIN = 1        # 主楼门槛（负分/0 分是纯噪音，直接剔）
+REDDIT_MAX_PAGES = 3       # 每帖最多翻几页评论（每页 100）
+
+_RD_CACHE = {}
+
+
+def _reddit_pid(url):
+    """从各种 reddit 链接里取帖子 id（/comments/<id>、redd.it/<id>、/r/<sub>/s/<id> 短链除外）。"""
+    m = re.search(r"/comments/([A-Za-z0-9]{5,10})", url)
+    if m:
+        return m.group(1).lower()
+    m = re.search(r"redd\.it/([A-Za-z0-9]{5,10})", url)
+    if m:
+        return m.group(1).lower()
+    return None
+
+
+def _rd_get(url, tries=2, timeout=60):
+    """归档接口专用：轻 UA + 重试（chunked 大响应偶发读超时）。"""
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "dsh-clip/1.0",
+                                                      "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8", "replace"))
+        except Exception as _e:
+            last = _e
+            time.sleep(2 + i * 2)
+    raise last
+
+
+def reddit_post(pid):
+    """帖元信息：title/subreddit/score/num_comments/created_utc/author/url/selftext/permalink。"""
+    if pid in _RD_CACHE:
+        return _RD_CACHE[pid]
+    post = None
+    try:
+        d = _rd_get(REDDIT_ARCTIC + "/posts/ids?ids=" + pid, timeout=30)
+        post = (d.get("data") or [None])[0]
+    except Exception:
+        post = None
+    if not post:
+        try:
+            time.sleep(1.2)
+            d = _rd_get(REDDIT_PULLPUSH + "/submission/?ids=" + pid, timeout=30)
+            post = (d.get("data") or [None])[0]
+        except Exception:
+            post = None
+    if not post:
+        return None
+    ts = post.get("created_utc") or 0
+    when = datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%Y-%m-%dT%H:%M:%S") if ts else ""
+    permalink = post.get("permalink") or ""
+    _RD_CACHE[pid] = {"title": html_unesc(post.get("title") or ""),
+                      "sub": post.get("subreddit") or "",
+                      "score": post.get("score") or 0,
+                      "num_comments": post.get("num_comments") or 0,
+                      "when": when,
+                      "author": ("u/" + html_unesc(post.get("author"))) if post.get("author") not in (None, "[deleted]", "") else "",
+                      "url": post.get("url") or "",
+                      "selftext": post.get("selftext") or "",
+                      "page": ("https://www.reddit.com" + permalink) if permalink else ("https://www.reddit.com/comments/" + pid)}
+    return _RD_CACHE[pid]
+
+
+def html_unesc(s):
+    return htmllib.unescape(s or "")
+
+
+def _rd_clean_body(t):
+    """评论正文清洗：反转义、剔零宽、去掉 Reddit 的 >!spoiler!< 包裹但保留文字。"""
+    t = html_unesc(t or "")
+    t = t.replace("\u200b", "").replace("\u00a0", " ")
+    t = re.sub(r">!\s*(.+?)\s*!<", r"\1", t, flags=re.S)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+def reddit_comments(pid, deep="pick"):
+    """抓 Reddit 评论（含楼中楼）。deep="pick" 按赞数筛选+补父链；"all" 全量不筛。"""
+    raw = []
+    before = None
+    try:
+        for _p in range(REDDIT_MAX_PAGES):
+            u = REDDIT_ARCTIC + "/comments/search?link_id=%s&limit=100" % pid
+            if before:
+                u += "&before=%d" % before
+            d = _rd_get(u, timeout=70)
+            batch = d.get("data") or []
+            if not batch:
+                break
+            raw.extend(batch)
+            before = min(int(c.get("created_utc") or 0) for c in batch)
+            if len(batch) < 100:
+                break
+            time.sleep(0.5)
+    except Exception as _e:
+        print("Reddit 评论抓取失败（%s），评论区留空" % _e)
+    if not raw:
+        return None
+
+    by_id, rows = {}, []
+    for c in raw:
+        cid = c.get("id")
+        body = _rd_clean_body(c.get("body"))
+        if not cid or not body or body in ("[deleted]", "[removed]"):
+            continue
+        if cid in by_id:
+            continue
+        by_id[cid] = {"id": cid, "parent": (c.get("parent_id") or ""),
+                      "author": html_unesc(c.get("author") or "匿名"),
+                      "score": int(c.get("score") or 0),
+                      "ts": int(c.get("created_utc") or 0),
+                      "body": body}
+        rows.append(by_id[cid])
+    if not rows:
+        return None
+
+    # 层级：父在集合内则 depth=父+1，否则按顶层处理
+    for r in rows:
+        d, cur, guard = 0, r, 0
+        while True:
+            par = cur["parent"] or ""
+            if not par.startswith("t1_"):
+                break
+            p = by_id.get(par[3:])
+            if not p or guard > 30:
+                break
+            d += 1
+            cur = p
+            guard += 1
+        r["depth"] = d
+        r["when"] = datetime.fromtimestamp(r["ts"], timezone.utc).astimezone().strftime("%Y-%m-%d") if r["ts"] else ""
+
+    raw_count = len(rows)
+    picked = False
+    kept_rows = rows
+    if deep != "all":
+        keep_ids = {r["id"] for r in rows
+                    if ((r["depth"] == 0 and r["score"] >= REDDIT_MAIN_MIN) or r["score"] >= REDDIT_PICK_MIN)}
+        subs = sorted([r for r in rows if r["depth"] >= 1 and r["id"] in keep_ids],
+                      key=lambda r: -r["score"])[:REDDIT_PICK_LIMIT]
+        keep_ids = {r["id"] for r in rows if r["depth"] == 0 and r["score"] >= REDDIT_MAIN_MIN} | {r["id"] for r in subs}
+        changed = True
+        while changed:            # 补齐父链，防断链
+            changed = False
+            for r in rows:
+                if r["id"] in keep_ids and r["parent"].startswith("t1_"):
+                    pid2 = r["parent"][3:]
+                    if pid2 in by_id and pid2 not in keep_ids:
+                        keep_ids.add(pid2)
+                        changed = True
+        kept_rows = [r for r in rows if r["id"] in keep_ids]
+        picked = len(kept_rows) < len(rows)
+
+    # 排序：主楼按赞数降序，子楼紧跟各自父楼（树序 = 先序遍历）
+    kids = {}
+    tops = []
+    for r in rows:
+        par = r["parent"] or ""
+        if par.startswith("t1_") and par[3:] in by_id:
+            kids.setdefault(par[3:], []).append(r)
+        else:
+            tops.append(r)
+    for arr in kids.values():
+        arr.sort(key=lambda r: -r["score"])
+    tops.sort(key=lambda r: -r["score"])
+    lead = reddit_post(pid) or {}
+    keepset = {x["id"] for x in kept_rows}
+    ordered, all_ordered = [], []
+
+    def walk(node, out, keep):
+        if keep is not None and node["id"] not in keep:
+            return
+        out.append(node)
+        for k in kids.get(node["id"], []):
+            walk(k, out, keep)
+
+    for t in tops:
+        walk(t, ordered, keepset)
+        walk(t, all_ordered, None)
+    return {"main": ordered, "all_rows": all_ordered, "extra": [], "source": "reddit", "endHint": None,
+            "story": lead.get("title") or "", "rd_url": lead.get("page") or "",
+            "points": lead.get("score") or 0, "sub": lead.get("sub") or "",
+            "picked": picked, "raw_count": raw_count,
+            "kept": len(ordered)}
+
+
+def reddit_comments_section(cm, note_only=False):
+    rows = cm.get("main") or []
+    deep = sum(1 for c in rows if c["depth"] > HN_MAX_INDENT)
+    if cm.get("picked"):
+        head = "## 评论区（%d 条：主楼 %d + 精选楼中楼 %d）" % (
+            len(rows), sum(1 for c in rows if c["depth"] == 0),
+            sum(1 for c in rows if c["depth"] >= 1))
+    else:
+        head = "## 评论区（%d 条）" % len(rows)
+    note = "Reddit 评论 %d 条，按赞数排序；缩进最多 %d 层" % (len(rows), HN_MAX_INDENT)
+    if deep:
+        note += "，更深的 %d 条用 ↳层级 标注" % deep
+    if cm.get("picked"):
+        note += ("。**楼中楼已筛选**：主楼取 ≥%d 赞，楼中楼按赞数取 ≥%d 赞并补齐父链，保留 %d 条"
+                 "（原始 %d 条）；全量未筛选的原文另存 `_底稿/`。"
+                 % (REDDIT_MAIN_MIN, REDDIT_PICK_MIN,
+                    sum(1 for c in rows if c["depth"] >= 1), cm.get("raw_count") or 0))
+    link = "讨论页：[%s](%s)（%d 赞）。" % (cm.get("story") or "Reddit", cm.get("rd_url") or "",
+                                             cm.get("points") or 0)
+    out = [head, "", link, "", note if note.endswith("。") else note + "。", ""]
+    if note_only:
+        return "\n".join(out).rstrip()
+    for c in rows:
+        d = c["depth"]
+        pad = INDENT * min(d, HN_MAX_INDENT)
+        mark = "" if d <= HN_MAX_INDENT else "↳%d " % d
+        head_l = "%s**%s%s · %s · %d 赞**" % (pad, mark, c["author"], c["when"], c["score"])
+        txt = c["body"] or "（无正文）"
+        if d == 0:
+            if out[-1] != "":
+                out.append("")
+            out += [head_l, ""] + txt.split("\n")
+        else:
+            out.append(head_l)
+            out += [pad + ln if ln else ln for ln in txt.split("\n")]
+    return "\n".join(out).rstrip()
+
+
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
     name = safe_name(doc["title"])
 
@@ -1344,6 +1578,8 @@ def build(doc, url, tags_line, summary, body, cmts, auto=False):
             parts = parts + ["", "---", "", "评论区：" + note + "。", ""]
     elif cmts and cmts.get("source") == "hn":
         parts += ["", "---", "", hn_comments_section(cmts)]
+    elif cmts and cmts.get("source") == "reddit":
+        parts += ["", "---", "", reddit_comments_section(cmts)]
     elif cmts and (cmts["main"] or cmts["extra"]):
         parts += ["", "---", "", comments_section(cmts)]
     return name, "\n".join(parts).rstrip() + "\n"
@@ -1381,7 +1617,7 @@ def main():
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
     ap.add_argument("--no-tag-suggest", action="store_true", help="不打印标签候选")
     ap.add_argument("--deep", default="pick", choices=["pick", "all"],
-                    help="Hacker News 楼中楼：pick=精选（默认，主楼全收+打分筛选+另存全量底稿）／all=全量不筛")
+                    help="楼中楼筛选（HN／Reddit）：pick=精选（默认，主楼全收+筛选+另存全量底稿）／all=全量不筛")
     a = ap.parse_args()
     # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
     # 2026-11-16：--stdout 是只读路径（精修/核对原文用），不该有推送副作用
@@ -1395,7 +1631,23 @@ def main():
         except Exception:
             pass
 
-    page, final = fetch(a.url)
+    # Reddit：reddit.com 本体对本机 IP 全 403，帖元信息与评论都走 Photon 归档
+    # （arctic-shift，兜底 pullpush）。self post 正文直接用归档里的 selftext（保 markdown），
+    # link post 则抓它指向的外链页当正文，标题/时间/作者仍用 Reddit 帖。
+    _rd_pid = _reddit_pid(a.url)
+    _rd_meta = reddit_post(_rd_pid) if _rd_pid else None
+    if not _rd_meta:
+        page, final = fetch(a.url)
+    else:
+        _rd_st = (_rd_meta.get("selftext") or "").strip()
+        if _rd_st:
+            page, final = "<html></html>", _rd_meta["page"]
+        else:
+            try:
+                page, final = fetch(_rd_meta.get("url") or _rd_meta["page"])
+            except Exception as _e:
+                print("Reddit 外链正文抓取失败（%s），正文留空" % _e)
+                page, final = "<html></html>", _rd_meta["page"]
 
     # HN 讨论帖：正文用帖子指向的原文页（HN 页本身只有列表），评论走 Algolia
     _hn_url = None
@@ -1461,6 +1713,8 @@ def main():
     title = (re.search(r"<h1[^>]*>(.*?)</h1>", page, re.S) and
              strip_tags(re.search(r"<h1[^>]*>(.*?)</h1>", page, re.S).group(1)))
     title = title or meta(page, "og:title")
+    if _rd_meta and _rd_meta.get("title"):
+        title = _rd_meta["title"]
     if not title or title.strip() == "未命名":
         try:
             from title_fix import title_fallback
@@ -1525,6 +1779,8 @@ def main():
 
     if _hn_meta and _hn_meta["when"]:
         date = _hn_meta["when"]
+    if _rd_meta and _rd_meta.get("when"):
+        date = _rd_meta["when"]
     author = None
     m = re.search(r'<span id="author_baidu">.*?<strong>(.*?)</strong>', page, re.S)
     if m:
@@ -1540,6 +1796,9 @@ def main():
             author = author_fallback(page)
         except Exception:
             pass
+
+    if _rd_meta and _rd_meta.get("author"):
+        author = _rd_meta["author"]
 
     # 中文站定制：作者/时间在页面节点或 JS 变量里，meta 全空（2026-11-17 实测）
     #   量子位：<span class="author">…<a rel="author">思邈</a> + <span class="date"> + <span class="time">
@@ -1604,6 +1863,12 @@ def main():
             body += "\n\n原文：[%s](%s)" % (_t, _hn_meta["url"])
         if _hn_meta["text"]:
             body += "\n\n" + _hn_meta["text"]
+    if _rd_meta and (_rd_meta.get("selftext") or "").strip():
+        body = html_unesc(_rd_meta["selftext"]).strip()
+        # link post 的外链页首段常是图片/卡片列表，摘要改用它自己的自述（若有 20 字以上）
+        _rd_st_txt = body.strip()
+        if len(_rd_st_txt) >= 20:
+            summary = _rd_st_txt.split("\n\n")[0].strip()
     body = fix_hotlinks(body)
 
     # 英文文章不自动翻译：只检测并强制标记待精修，由精修队员译中（2026-11-12 用户决定）
@@ -1655,7 +1920,9 @@ def main():
     tags_line = " ".join("#" + t.replace(" ", "").lstrip("#") for t in tags[:3] if t.strip())
     cmts = None
     if not a.no_comments:
-        if "ithome.com" in final:
+        if _rd_pid:
+            cmts = reddit_comments(_rd_pid, deep=getattr(a, "deep", "pick"))
+        elif "ithome.com" in final:
             cmts = ithome_comments(page)
         elif "mydrivers.com" in final:
             cmts = mydrivers_comments(final)
@@ -1668,7 +1935,9 @@ def main():
 
     summary = a.summary
     if not summary:
-        paras = [re.sub(r"[*_>`]", "", x.strip()) for x in body.split("\n")
+        # 2026-11-17：先剥掉行内图片（外链页首段常是"图片+标题"卡片列表，摘约会抓成图链）
+        _b2 = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", body)
+        paras = [re.sub(r"[*_>`]", "", x.strip()) for x in _b2.split("\n")
                  if x.strip() and not x.startswith(("#", "![", "原文："))
                  and not re.fullmatch(r"\[[^\]]*\]\([^)]*\)", x.strip())
                  and not x.strip().startswith(("http://", "https://"))]
@@ -1695,6 +1964,28 @@ def main():
     _bk = _backup_or_die(path)
     _write_text(path, md)
     # HN 精选模式下另存全量底稿（未筛选、未翻译），放 _底稿/ 子目录，不混进笔记列表
+    if cmts and cmts.get("source") == "reddit" and cmts.get("picked"):
+        try:
+            _c2 = dict(cmts)
+            _c2["main"] = cmts.get("all_rows") or []
+            _c2["picked"] = False
+            _sec = reddit_comments_section(_c2)
+            _fm = ["---", "created: %s" % (doc.get("date") or datetime.now().strftime("%Y-%m-%d")),
+                   "url: %s" % (_rd_meta.get("page") if _rd_meta else final), "---", ""]
+            tag_list = [t.lstrip("#").strip() for t in (tags_line or "").split() if t.lstrip("#").strip()]
+            if tag_list:
+                _fm += ["tags:"]
+                _fm += ["  - %s" % t for t in tag_list]
+                _fm += [""]
+            _ddir = os.path.join(a.out, "_底稿")
+            os.makedirs(_ddir, exist_ok=True)
+            _dp = os.path.join(_ddir, name + "_评论全文.md")
+            _backup_or_die(_dp)
+            _write_text(_dp, "\n".join(_fm) + "# %s（评论全文，%d 条）\n\n"
+                         % (doc.get("title") or name, len(_c2["main"])) + _sec + "\n")
+            print("评论全文底稿：%s（%d 条）" % (_dp, len(_c2["main"])))
+        except Exception as _e:
+            print("评论全文底稿写入失败：%s" % _e)
     if cmts and cmts.get("source") == "hn" and cmts.get("picked"):
         try:
             _rows = cmts.get("all_rows") or []
