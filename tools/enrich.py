@@ -20,6 +20,9 @@
     --all-src   prep 模式每簇所有源都抓（默认只抓主源，省一半请求）
     --input     显式指定输入 json（如 <workdir>/pool_2026-11-17.json）
     --out       显式指定输出 json（默认 prep 模式→prep/enrich.json，flat→<workdir>/enrich.json）
+    --proxy URL          全程走该代理（默认 None=直连/跟随环境变量）
+    --fallback-proxy URL 仅对「网络层失败」条目用代理兜底重试一次（推荐：直连优先，代理只兜底）
+    --retries N          网络类失败重试次数（默认 2；401/403/404/410 一律不重试）
 统计输出：可用 / 太薄 / 失败 / 总耗时 / 正文中位字数。
 真源：/root/workspace/tools/enrich.py（news-ai 与 news-tools 共用，改这里）
 """
@@ -29,6 +32,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -42,40 +46,76 @@ CUT = re.compile(r"(投诉水文|我要纠错|下载IT之家APP|相关文章|关
 BLOCK = re.compile(r"(?i)</?(p|div|br|li|h[1-6]|tr|section|article)[^>]*>")
 
 
-def fetch_text(url, chars):
+_OPENERS = {}
+
+
+def _opener(proxy):
+    """proxy=None 时沿用环境变量（http_proxy/https_proxy），与旧版 urlopen 行为一致。"""
+    key = proxy or ""
+    if key not in _OPENERS:
+        if proxy:
+            _OPENERS[key] = urllib.request.build_opener(
+                urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        else:
+            _OPENERS[key] = urllib.request.build_opener()
+    return _OPENERS[key]
+
+
+# 无重试价值的 HTTP 状态：反爬/不存在，重试只烧时间（2026-11-17 实测 403 站点换代理仍 403）
+NO_RETRY = (401, 403, 404, 410)
+
+
+def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
+    """抓正文。2026-11-17 修：原版无代理参数、无重试、timeout 固定 10s。
+    实测直连 technologyreview 抛 URLError（网络层失败），走 7890 能拿到内容；
+    403/404 类站点（theinformation、openai）换代理照样 403，不重试。"""
     t0 = time.time()
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA,
-                                                   "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
-        raw = urllib.request.urlopen(req, timeout=10).read()
-        s = None
-        for enc in ("utf-8", "gbk", "big5"):
-            try:
-                s = raw.decode(enc)
+    opener = _opener(proxy)
+    err = ""
+    tries = 0
+    while True:
+        tries += 1
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA,
+                                                       "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
+            raw = opener.open(req, timeout=timeout).read()
+            s = None
+            for enc in ("utf-8", "gbk", "big5"):
+                try:
+                    s = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if s is None:
+                s = raw.decode("utf-8", "replace")
+            s = DROP.sub(" ", s)
+            s = BLOCK.sub("\n", s)
+            txt = html.unescape(re.sub(r"<[^>]+>", " ", s))
+            txt = re.sub(r"[ \t\u3000]+", " ", txt)
+            txt = re.sub(r"\n\s*\n+", "\n", txt).strip()
+            m = CUT.search(txt)
+            if m and m.start() > 300:
+                txt = txt[:m.start()]
+            # 去掉页面头部导航残留：从第一段超过 60 字的行开始
+            lines = txt.split("\n")
+            start = next((i for i, l in enumerate(lines) if len(l) > 60), 0)
+            txt = "\n".join(lines[start:])
+            cjk = len(re.findall(r"[\u4e00-\u9fa5]", txt))
+            lang = "zh" if cjk > len(txt) * 0.15 else "en"
+            return {"ok": len(txt) >= 600, "chars": len(txt), "text": txt[:chars],
+                    "lang": lang, "sec": round(time.time() - t0, 1), "tries": tries}
+        except urllib.error.HTTPError as e:
+            err = "HTTP%d" % e.code
+            if e.code in NO_RETRY or tries > retries:
                 break
-            except UnicodeDecodeError:
-                continue
-        if s is None:
-            s = raw.decode("utf-8", "replace")
-        s = DROP.sub(" ", s)
-        s = BLOCK.sub("\n", s)
-        txt = html.unescape(re.sub(r"<[^>]+>", " ", s))
-        txt = re.sub(r"[ \t\u3000]+", " ", txt)
-        txt = re.sub(r"\n\s*\n+", "\n", txt).strip()
-        m = CUT.search(txt)
-        if m and m.start() > 300:
-            txt = txt[:m.start()]
-        # 去掉页面头部导航残留：从第一段超过 60 字的行开始
-        lines = txt.split("\n")
-        start = next((i for i, l in enumerate(lines) if len(l) > 60), 0)
-        txt = "\n".join(lines[start:])
-        cjk = len(re.findall(r"[\u4e00-\u9fa5]", txt))
-        lang = "zh" if cjk > len(txt) * 0.15 else "en"
-        return {"ok": len(txt) >= 600, "chars": len(txt), "text": txt[:chars],
-                "lang": lang, "sec": round(time.time() - t0, 1)}
-    except Exception as e:
-        return {"ok": False, "chars": 0, "text": "", "err": type(e).__name__,
-                "sec": round(time.time() - t0, 1)}
+            time.sleep(0.6 * tries)
+        except Exception as e:
+            err = type(e).__name__
+            if tries > retries:
+                break
+            time.sleep(0.6 * tries)
+    return {"ok": False, "chars": 0, "text": "", "err": err, "sec": round(time.time() - t0, 1),
+            "tries": tries}
 
 
 def _desc_len(it):
@@ -109,6 +149,9 @@ def main():
     chars = int(arg("--chars", 900))
     top = int(arg("--top", 0))
     all_src = "--all-src" in sys.argv
+    proxy = arg("--proxy") or os.environ.get("ENRICH_PROXY") or None
+    fb_proxy = arg("--fallback-proxy") or os.environ.get("ENRICH_FALLBACK_PROXY") or None
+    retries = int(arg("--retries", 2))
 
     path, mode = pick_input(d, arg("--input"))
     if "--from" in sys.argv and sys.argv[sys.argv.index("--from") + 1] in ("prep", "flat"):
@@ -140,11 +183,25 @@ def main():
                 targets.append(u)
         label = "条目 %d 条" % len(rows)
 
-    print("%s（%s）→ %s · 待抓 %d · 并发 %d · 每篇取 %d 字"
-          % (label, mode, os.path.basename(path), len(targets), workers, chars))
+    print("%s（%s）→ %s · 待抓 %d · 并发 %d · 每篇取 %d 字%s"
+          % (label, mode, os.path.basename(path), len(targets), workers, chars,
+             (" · 代理 " + proxy if proxy else " · 直连") + (f" · 重试 {retries}" if retries else "")))
     t0 = time.time()
     with ThreadPoolExecutor(workers) as ex:
-        res = list(ex.map(lambda u: (u, fetch_text(u, chars)), targets))
+        res = list(ex.map(lambda u: (u, fetch_text(u, chars, proxy=proxy, retries=retries)), targets))
+    # 直连网络层失败的条目用代理兜底（实测：国内直连 technologyreview 抛 URLError 而走 7890 可通；
+    # 反之 NYT 类站点直连可抓、走美国机房 IP 反而 403——所以代理只做兜底，不做默认）
+    NET_FAIL = ("URLError", "TimeoutError", "socket.timeout", "RemoteDisconnected",
+                "ConnectionResetError", "SSLError", "OSError")
+    if fb_proxy:
+        net_bad = [u for u, r in res if not r["ok"] and r.get("err") in NET_FAIL]
+        if net_bad:
+            print("网络层失败 %d 条，用兜底代理 %s 重试" % (len(net_bad), fb_proxy))
+            with ThreadPoolExecutor(workers) as ex:
+                fixed = list(ex.map(lambda u: (u, fetch_text(u, chars, proxy=fb_proxy, retries=1)), net_bad))
+            store = {u: r for u, r in res}
+            store.update(dict(fixed))
+            res = [(u, store[u]) for u, _ in res]
     store = {u: r for u, r in res}
     ok = [r for _, r in res if r["ok"]]
     thin = [r for _, r in res if not r["ok"] and r["chars"] > 0]
