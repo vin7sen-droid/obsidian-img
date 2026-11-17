@@ -38,7 +38,9 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
          "mm.mjs", "zh.mjs", "numcheck.py", "summary_check.py", "radar_spotcheck.py", "xcheck.mjs",
         "draft_summary.py", "hn.py", "mdzh.py", "note_zh.py", "inbox_xcheck.mjs",
          "translate.mjs", "name-guard.mjs", "names-extra.json",
-         "tag_suggest.py", "enrich.py"]
+         "tag_suggest.py", "enrich.py",
+         # P0 同步缺口（2026-11-17 补）：日报管线必经的渲染与质检脚本，缺了换设备直接崩
+         "mdhtml.py", "md2html.py", "claim_check.py", "linkcheck.py", "lookup_meta.py"]
 # 边界护栏：下载器只允许以 @ 前缀（workspace 根）引用；裸 *_dl.py = 误放 tools/，拒绝
 _BAD = [f for f in FILES if f.endswith("_dl.py") and not f.startswith("@")]
 if _BAD:
