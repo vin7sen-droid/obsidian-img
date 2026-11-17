@@ -191,6 +191,22 @@ function scaleZh(m, cur, num, unit) {
 // 把图片 ![alt](url) 的孤立 ! 转成全角 ！，直接调 translateTexts 的调用方会拿到坏链接。
 // zh.mjs 在外层也占位一次，重复无害（外层先做，这里看到的是占位符或纯文本）。
 const URL_RE = /!\[[^\]]*\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)\]）」”'"，。；、！？]+/gi;
+// 2026-11-17 补：缩写量级词 300B / $1.4T / 5.46M（引擎把「300B tokens」直译成「300亿个令牌」，
+// 差 10 倍——B 被当成「亿」）。与 SCALE_RE 同样整组占位、还原成中文量级。
+// 右边界 (?![A-Za-z0-9]) 保证 512MB/4TB 这类复合单位不被误伤（M/T 后紧跟 B 即不匹配）。
+const ABBR_RE = /(Rs\.?\s*|[$€£¥₹]\s*)?(\d[\d,]*(?:\.\d+)?)\s?([KMBT])(?![A-Za-z0-9])/g;
+const ABBR_MULT = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+function abbrZh(cur, num, unit) {
+  const v = Number(num.replace(/,/g, "")) * ABBR_MULT[unit.toUpperCase()];
+  let zh;
+  if (v >= 1e12) zh = fmtNum(v / 1e12) + "万亿";
+  else if (v >= 1e8) zh = fmtNum(v / 1e8) + "亿";
+  else if (v >= 1e4) zh = fmtNum(v / 1e4) + "万";
+  else zh = num;
+  if (cur) zh += SCALE_CUR[String(cur).trim()] || "";
+  return zh;
+}
+
 function protect(text, bag) {
   const put = (s) => { const i = bag.length; bag.push(s); return "zqx" + i + "zqx"; };
   let out = text.replace(URL_RE, (m) => put(m));      // 先护链接（含图片语法）
@@ -202,6 +218,10 @@ function protect(text, bag) {
   out = out.replace(NAME_RE, (m) => put(NAME_MAP.get(m.toLowerCase()) || m));
   // 量级词占位必须排在 UNIT_RE/PROTECT_RE 之前（词边界互不干扰，但顺序统一先数字后单位）
   out = out.replace(SCALE_RE, (m, cur, num, unit) => put(scaleZh(m, cur, num, unit)));
+  out = out.replace(ABBR_RE, (m, cur, num, unit) => put(abbrZh(cur, num, unit)));
+  // 2026-11-17 补：纯千分位数字（50,000 / 28,672）原样占位——引擎会输出全角逗号「50，000」，
+  // 中文排版里既不规范也易被后续解析误判（已出现 4 处人工修）。
+  out = out.replace(/\d{1,3}(?:,\d{3})+(?!\d)/g, (m) => put(m));
   // 单位必须**排在 PROTECT_RE 之前**：PROTECT_WORDS 里的 tts/watts 片段会先把 megawatts 切碎
   // （实测 megawatts → "megaw"+zqx 占位），落到 PROTECT_RE 后面就再也匹配不到完整单位词。
   out = out.replace(UNIT_RE, (m) => put(UNIT_ZH[m.toLowerCase()] || m));
