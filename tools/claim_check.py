@@ -121,7 +121,7 @@ def check(items, pool):
 
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2 or sys.argv[1].startswith("-"):
         print(__doc__)
         return 2
     md = sys.argv[1]
