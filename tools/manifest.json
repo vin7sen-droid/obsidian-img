@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-17T20:14:51+08:00",
+ "updated": "2026-11-17T20:24:59+08:00",
  "files": {
   "clip.py": {
    "sha256": "53d18819bfaea9e7700326086f8418274178b18176b6df3ae618f89ebbf61f7c",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "3736435dbca4dc2b4ae521c1e380af0efd338bba675f6e5e6d62f6808bb25ac6",
-   "bytes": 15154
+   "sha256": "2078bb29c44305889eea8952d96f802c3f1e33146fb541c82e5f90b63b7222b2",
+   "bytes": 15188
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -88,6 +88,14 @@
   "mdzh.py": {
    "sha256": "26f866de7e0567bedcf351e5fa8eacc279bd92023d10024e43c2ccfa1589c679",
    "bytes": 4365
+  },
+  "note_zh.py": {
+   "sha256": "a2a552944595dce5f8ae671451f4a0478d20a5209a426dd28a6a1a2d1b422dc5",
+   "bytes": 5108
+  },
+  "inbox_xcheck.mjs": {
+   "sha256": "3d893adabc4ab87d785e43ba05ab2304778c163d3adeb7696fd79c0311dc2be4",
+   "bytes": 838
   },
   "translate.mjs": {
    "sha256": "2693644239ae9e3ec2f3aad13e7c85856b4671724da67a3e7d4c5901b6272e7a",
