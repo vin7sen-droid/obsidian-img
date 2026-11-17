@@ -129,16 +129,66 @@ function close(a, b) {
   return d / s < 0.02 || d < 1e-6;
 }
 
+// 单个数字能否在候选数组里找到对应：带单位的只比 SI 值（防「18亿」靠裸 18 冒充 18 crore），
+// 裸数字比数值本身；≤10 的裸数字额外接受汉字写法（top 4 → 四大、Q3 → 第三季度）。
+function hitNum(e, arr, plainText) {
+  return arr.some((t) => (e.unit && t.unit ? close(e.si, t.si) : !e.unit && !t.unit ? close(e.n, t.n) : false))
+    || (!e.unit && e.n >= 1 && e.n <= 10 && new RegExp(CN_SMALL_INV[e.n]).test(plainText));
+}
+
+// 逐行判断语言再选解析器：雷达约三成条目源自中文站（原文本身就是中文），
+// 整体判断在「中英混排」文档上会失效，逐行才不会把「3400亿」当成裸 3400 报假 missing。
+function parseSrcNums(text) {
+  const out = [];
+  for (const line of String(text).split(/\n/)) {
+    const cjk = (line.match(/[\u4e00-\u9fff]/g) || []).length;
+    out.push(...(cjk > Math.max(8, line.length * 0.15) ? parseZhNums(line) : parseNums(line)));
+  }
+  return out;
+}
+
+// 离线数字校验（2026-11-17 用户定：「numcheck.py 移到 xcheck.mjs」）。
+// 把原文数字与译文数字都归一到 SI 值比，输出与旧 numcheck.py 同构的 JSON（missing/extra/scale_risk 字段名不变，
+// 技能 SOP 里的判读口径可直接沿用）。相比旧 numcheck.py 三点改进：
+//   ① 跨语言 SI 归一——"$13 billion" ↔ 「130 亿」自动放行（旧版把 13 与 130 双双报缺失/多余，靠人猜「换算≠丢失」）；
+//   ② 认 crore/lakh/万亿/亿/万/万千瓦、全角逗号（68，000）、$1.4T / 5.46M 这类缩写；
+//   ③ 量级差 10 倍时报 scale_risk 而非 missing（$2T→2000亿 这类真错仍抓得到）。
+export function numDiff(srcText, zhText) {
+  const E = parseSrcNums(srcText), T = parseZhNums(zhText);
+  const zhNorm = norm(zhText), srcNorm = norm(srcText);
+  const missing = {}, extra = {}, scaleRisk = [];
+  let missTotal = 0, extraTotal = 0;
+  for (const e of E) {
+    if (hitNum(e, T, zhNorm)) continue;
+    missTotal++;
+    const key = String(e.n);
+    missing[key] = (missing[key] || 0) + 1;
+    // 译文里恰好存在 si/10 或 si*10 的值 → 是换算错（量级），不是单纯丢失
+    const alt = [e.si / 10, e.si * 10];
+    if (T.some((t) => alt.some((a) => close(t.n, a)))) scaleRisk.push({ src: key, expect_zh: [e.si] });
+  }
+  for (const t of T) {
+    if (hitNum(t, E, srcNorm)) continue;
+    extraTotal++;
+    const key = String(t.n);
+    extra[key] = (extra[key] || 0) + 1;
+  }
+  return {
+    src_num_tokens: E.length,
+    zh_num_tokens: T.length,
+    missing, missing_total: missTotal,
+    extra, extra_total: extraTotal,
+    scale_risk: scaleRisk, scale_risk_total: scaleRisk.length,
+  };
+}
+
 // 数字一致性：原文每个数（按 si）都要在腾讯译文里找到匹配；谷歌译文作为对照。
 // 单位数字只比 si（防「18亿」靠裸 18 冒充 18 crore）；无单位数字比数值本身（≤10 时也接受汉字数字）。
 export function numVerdict(en, zh, g) {
   const E = parseNums(en), T = parseZhNums(zh), G = parseZhNums(g || "");
   if (!E.length) return "ok";
   const zhText = norm(zh);
-  const hit = (e, arr) =>
-    arr.some((t) => (e.unit && t.unit ? close(e.si, t.si) : !e.unit && !t.unit ? close(e.n, t.n) : false)) ||
-    // 小数字被译成汉字（top 4 → 四大、Q3 → 第三季度）
-    (!e.unit && e.n >= 1 && e.n <= 10 && new RegExp(CN_SMALL_INV[e.n]).test(zhText));
+  const hit = (e, arr) => hitNum(e, arr, zhText);
   const hitT = E.filter((e) => hit(e, T)).length;
   const hitG = E.filter((e) => hit(e, G)).length;
   if (hitT === E.length) return "ok";
@@ -603,4 +653,15 @@ export function writeReviewList(dir, stamp, flagged, meta = {}) {
   });
   fs.writeFileSync(p, lines.join("\n"), "utf-8");
   return p;
+}
+// ── CLI 入口（2026-11-17）：node xcheck.mjs --numcheck <原文.txt> <译文.txt>
+// tools/numcheck.py 已改为薄转发到这里，技能 SOP 里的 `python3 tools/numcheck.py <原文> <译文>` 命令保持不变。
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+  const argv = process.argv.slice(2);
+  if (argv[0] === "--numcheck" && argv[1] && argv[2]) {
+    console.log(JSON.stringify(numDiff(fs.readFileSync(argv[1], "utf-8"), fs.readFileSync(argv[2], "utf-8")), null, 1));
+  } else {
+    console.error("用法: node xcheck.mjs --numcheck <原文.txt> <译文.txt>");
+    process.exit(2);
+  }
 }
