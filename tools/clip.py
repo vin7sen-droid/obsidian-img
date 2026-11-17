@@ -1863,6 +1863,18 @@ def main():
             body += "\n\n原文：[%s](%s)" % (_t, _hn_meta["url"])
         if _hn_meta["text"]:
             body += "\n\n" + _hn_meta["text"]
+    if _rd_meta and not (_rd_meta.get("selftext") or "").strip() and not (body or "").strip():
+        # link post 的外链抓不到（付费墙/反爬，如 Reuters 401、CAPTCHA）时不要留空正文，
+        # 退化为「讨论帖说明」：原文链接 + Reddit 分数与评论数 + 讨论页，与 HN Ask HN 的处理一致。
+        _rd_host = re.sub(r"^https?://(www\.)?", "", (_rd_meta.get("url") or "")).split("/")[0] or "原站"
+        body = "\n".join([
+            "原文（%s）全文抓取受限，未能取回正文；此处保留 Reddit 讨论与元信息。" % _rd_host,
+            "",
+            "- 原文链接：%s" % (_rd_meta.get("url") or ""),
+            "- Reddit 讨论：r/%s · %d 赞 · %d 条评论"
+            % (_rd_meta.get("sub") or "", _rd_meta.get("score") or 0, _rd_meta.get("num_comments") or 0),
+            "- 讨论页：%s" % (_rd_meta.get("page") or ""),
+        ])
     if _rd_meta and (_rd_meta.get("selftext") or "").strip():
         body = html_unesc(_rd_meta["selftext"]).strip()
         # link post 的外链页首段常是图片/卡片列表，摘要改用它自己的自述（若有 20 字以上）
