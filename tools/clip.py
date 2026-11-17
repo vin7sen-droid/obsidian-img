@@ -1112,7 +1112,7 @@ def hn_comments_section(cm, note_only=False):
                  % (HN_PICK_MIN, cm.get("kept_sub") or 0, cm.get("raw_sub") or 0))
     link = "讨论页：[%s](%s)（%d 分）。" % (cm.get("story") or "Hacker News",
                                              cm.get("hn_url") or "", cm.get("points") or 0)
-    out = [head, "", link, "", note + ".", ""]
+    out = [head, "", link, "", note if note.endswith("。") else note + "。", ""]
     if note_only:
         return "\n".join(out).rstrip()
     for c in rows:
