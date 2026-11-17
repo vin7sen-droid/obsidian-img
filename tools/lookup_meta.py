@@ -26,7 +26,12 @@ for f in glob.glob("*.md"):
     a=re.search(r"^author:\s*(.*)$",fm,re.M)
     if (not a or not a.group(1).strip()) and not re.search(r"^url:",fm,re.M):
         todo.append(f)
-N=int(sys.argv[1]) if len(sys.argv)>1 else 0
+if len(sys.argv) > 1 and sys.argv[1].startswith("-"):
+    sys.exit("用法: python3 lookup_meta.py [N]")
+try:
+    N=int(sys.argv[1]) if len(sys.argv)>1 else 0
+except ValueError:
+    sys.exit("用法: python3 lookup_meta.py [N]")
 todo=todo[:N] if N else todo
 print(f"待处理 {len(todo)} 篇")
 ok=amb=fail=0
