@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mdzh
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
-HEAD = re.compile(r"^(　*)\*\*(?:↳\d+\s+)?(.+?)\s·\s(\d{4}-\d{2}-\d{2})\*\*$")
+# 条目头：`**作者 · 2026-11-17**`（HN）或 `**作者 · 2026-11-17 · 61 赞**`（Reddit，赞数可负）
+HEAD = re.compile(r"^(　*)\*\*(?:↳\d+\s+)?(.+?)\s·\s(\d{4}-\d{2}-\d{2})(?:\s·\s-?\d+\s赞)?\*\*$")
 
 
 def split_note(text):
