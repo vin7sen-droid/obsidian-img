@@ -1,9 +1,9 @@
 {
- "updated": "2026-11-17T23:12:53+08:00",
+ "updated": "2026-11-17T23:59:22+08:00",
  "files": {
   "clip.py": {
-   "sha256": "ef73f666f0248457e9da67f32367afed672257cff3025b7683fd52b82473a19a",
-   "bytes": 74692
+   "sha256": "3a759c40be612ac6736c08174999bd99dbaf22bd97a15960fb08f7326e1ffa8a",
+   "bytes": 87503
   },
   "clip_server.py": {
    "sha256": "3bf38ab5db821c7ca6c67d374f9b06bdaf797d2593ef3773b87d2bab9a438d2a",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "a3f65f655b8e7de7061774506de303942a6ee77465934e5d992cbed7cb496f18",
-   "bytes": 15408
+   "sha256": "d35d2ac374324198e8aacf9e4c40e74c86ec60428f882e865ed8754b925ed78c",
+   "bytes": 15816
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -74,8 +74,8 @@
    "bytes": 4927
   },
   "xcheck.mjs": {
-   "sha256": "1626f23a45cf67a973741c63abce401af5a5537650ef18c06764190612d9d8d4",
-   "bytes": 38344
+   "sha256": "be74fdfbb7fe7cbf1da17e3824747473dd414ddabd9ff4b643efbb1caf10debe",
+   "bytes": 38749
   },
   "draft_summary.py": {
    "sha256": "aa70fcb4b42f08db138e488ee2b35b133e5ffe893fc6f08cad0f482b2ebd777e",
@@ -90,8 +90,8 @@
    "bytes": 4728
   },
   "note_zh.py": {
-   "sha256": "a2a552944595dce5f8ae671451f4a0478d20a5209a426dd28a6a1a2d1b422dc5",
-   "bytes": 5108
+   "sha256": "30141840bf7e38608fd23cbbce4a53679837551e1ed6fa7ad000e7ff3c4edbbe",
+   "bytes": 5408
   },
   "inbox_xcheck.mjs": {
    "sha256": "3d893adabc4ab87d785e43ba05ab2304778c163d3adeb7696fd79c0311dc2be4",
@@ -126,16 +126,16 @@
    "bytes": 563
   },
   "claim_check.py": {
-   "sha256": "5c168e0372de3915a2f4903beef580e32a845cfb2c81bff2564ac5a9d9267c81",
-   "bytes": 6819
+   "sha256": "5afadc3498e68ecf3cdf0c82e35dd26d2dd2b610f88717025d05a3e244d3e950",
+   "bytes": 6850
   },
   "linkcheck.py": {
-   "sha256": "3d566c7da67811de568a398f54164fac8f4fc2aa5f25b53c7fc3a9c7edb6ee50",
-   "bytes": 3813
+   "sha256": "8546519bb0e0ae558bea17280cfb97e3b1956c2d6e0c5b306dede796f30f913e",
+   "bytes": 3964
   },
   "lookup_meta.py": {
-   "sha256": "4fad7eb026a3c5cf03a774bdec61054218b96e39b080212b59fa05c88f636185",
-   "bytes": 3687
+   "sha256": "237a3c6096ef1bc73e37289ca85a336cb7e6e03eb22b1bae3f469051468d5b74",
+   "bytes": 3871
   }
  }
 }
