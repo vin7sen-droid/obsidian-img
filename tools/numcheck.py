@@ -1,46 +1,30 @@
 #!/usr/bin/env python3
-# 数字回源校验 v2：① 数字 token 集合比对（漏译/编造）② billion/million/trillion 量级换算检测
-# 用法：python3 numcheck.py <原文.txt> <译文.txt>
-# 量级规则：N billion → 预期译文含 N*10（亿）或 N*1000（万）；N million → N（百万）或 N*100（万）；
-#          N trillion → N（万亿）。译文数字 token 不在候选集 → scale_risk（量级错/换算错）。
-import re, sys, json
-from collections import Counter
+# -*- coding: utf-8 -*-
+"""numcheck.py —— 薄转发（单一真源 /root/workspace/tools/xcheck.mjs 的 numDiff）
 
-NUM_TOKEN = re.compile(r"\$?\d[\d,.]*%?")
-SCALE = re.compile(r"(\$?)(\d[\d,.]*)\s*(trillion|billion|million)", re.I)
+数字回源校验：原文数字 vs 译文数字，按 SI 归一比对，输出 missing / extra / scale_risk。
+用法: python3 numcheck.py <原文.txt> <译文.txt>
 
-def tokens(t):
-    return Counter(x.replace(",", "") for x in NUM_TOKEN.findall(t))
+2026-11-17 用户定「移到 xcheck.mjs」：本文件不再有独立实现，只做命令行兼容转发
+（技能 SOP 里既有的 `python3 tools/numcheck.py a b` 调用路径全部不变）。
+改逻辑请改 xcheck.mjs 的 numDiff / parseNums / parseZhNums。
+"""
+import os
+import sys
+import subprocess
 
-def scale_pairs(t):
-    out=[]
-    for m in SCALE.finditer(t):
-        n=float(m.group(2).replace(",","")); unit=m.group(3).lower()
-        if unit=="billion": cand=[n*10, n*1000]      # 亿 / 万
-        elif unit=="million": cand=[n, n*100]        # 百万 / 万
-        else: cand=[n, n*10000]                      # 万亿 / 亿
-        out.append((m.group(0), [round(c,4) for c in cand]))
-    return out
+XCHECK = "/root/workspace/tools/xcheck.mjs"
 
-src, dst = open(sys.argv[1], encoding="utf-8").read(), open(sys.argv[2], encoding="utf-8").read()
-a, b = tokens(src), tokens(dst)
-missing = a - b
-extra = b - a
-zh_nums={x.replace(",","") for x in tokens(dst)}
-def fmt(c):
-    return str(int(c)) if float(c)==int(c) else str(c)
-scale_risk=[]
-for frag,cand in scale_pairs(src):
-    hit=any(fmt(c) in zh_nums for c in cand)
-    if not hit: scale_risk.append({"src":frag,"expect_zh":cand})
-rpt = {
-    "src_num_tokens": sum(a.values()),
-    "zh_num_tokens": sum(b.values()),
-    "missing": dict(missing),
-    "missing_total": sum(missing.values()),
-    "extra": dict(extra),
-    "extra_total": sum(extra.values()),
-    "scale_risk": scale_risk,
-    "scale_risk_total": len(scale_risk),
-}
-print(json.dumps(rpt, ensure_ascii=False, indent=1))
+if len(sys.argv) < 3:
+    print(__doc__.strip(), file=sys.stderr)
+    sys.exit(2)
+
+if not os.path.exists(XCHECK):
+    print("找不到真源 " + XCHECK, file=sys.stderr)
+    sys.exit(3)
+
+r = subprocess.run(["node", XCHECK, "--numcheck", sys.argv[1], sys.argv[2]],
+                   capture_output=True, text=True)
+sys.stdout.write(r.stdout)
+sys.stderr.write(r.stderr)
+sys.exit(r.returncode)
