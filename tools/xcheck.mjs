@@ -53,9 +53,14 @@ const CN_SMALL = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 
 const NUM = String.raw`(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)`;
 const toN = (s) => Number(String(s).replace(/,/g, ""));
 
+// 域名里的数字不是内容（2026-11-17 抓：标题尾部 "- Mi-3.com.au." 的 3 被当数字，
+// 中文标题按版式剥掉站点名后 3 消失，报「数字对不上」假阳）。归一阶段整段抹掉域名。
+const DOMAIN_RE = /\b[\w-]+\.(?:com|cn|net|org|io|ai|co|au|uk|de|jp|tw|hk|kr|in|fr|ru|br|me|tv|cc|app|dev|news|info|biz|xyz)(?:\.[a-z]{2})?\b/gi;
+
 // 归一化：全角逗号/句点/空格当分隔符（腾讯会把 68,000 输出成 68，000）
 function norm(s) {
   return String(s || "")
+    .replace(DOMAIN_RE, " ")
     .replace(/[，､]/g, ",")
     .replace(/[．]/g, ".")
     .replace(/[\u3000\u00a0]/g, " ")
