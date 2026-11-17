@@ -121,13 +121,21 @@ def main():
     print("译文：%s（翻 %d 行 / %d 条楼层）" % (dst, len(keep), len(idxs)))
 
     if a.xcheck and pairs:
-        pj = "/tmp/xcheck_pairs.json"
-        json.dump(pairs, open(pj, "w", encoding="utf-8"), ensure_ascii=False)
-        r = subprocess.run(["node", os.path.join(TOOLS, "inbox_xcheck.mjs"), pj],
-                           capture_output=True, text=True, timeout=900)
-        sys.stdout.write(r.stdout)
-        if r.returncode != 0:
-            print("xcheck 失败：%s" % (r.stderr or "")[-300:])
+        # pid 隔离：固定文件名会让并发会话互相覆盖（A 的消费者读到 B 的对）
+        pj = "/tmp/xcheck_pairs_%d.json" % os.getpid()
+        try:
+            with open(pj, "w", encoding="utf-8") as f:
+                json.dump(pairs, f, ensure_ascii=False)
+            r = subprocess.run(["node", os.path.join(TOOLS, "inbox_xcheck.mjs"), pj],
+                               capture_output=True, text=True, timeout=900)
+            sys.stdout.write(r.stdout)
+            if r.returncode != 0:
+                print("xcheck 失败：%s" % (r.stderr or "")[-300:])
+        finally:
+            try:
+                os.remove(pj)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
