@@ -870,6 +870,7 @@ def _news_comment_count(newsid):
 # Algolia items 接口一次返回整棵评论树（children 递归嵌套），无需逐条请求。
 HN_API = "https://hn.algolia.com/api/v1/items/%s"
 HN_MAX_INDENT = 2          # 缩进最多 2 个全角（第 3 层起不再加深，改在头行标 ↳层级）
+HN_DEEP_LIMIT = 200        # 楼层超过此数后只保留主楼层（用户 2026-11-17 定）
 
 
 def _hn_clean(s):
@@ -968,17 +969,22 @@ def hn_comments(url):
     walk(data, 0)
     if not rows:
         return None
+    _trimmed = len(rows) > HN_DEEP_LIMIT
+    if _trimmed:
+        rows = [r for i, r in enumerate(rows) if i < HN_DEEP_LIMIT or r["depth"] == 0]
     return {"main": rows, "extra": [], "source": "hn", "endHint": None,
             "story": data.get("title") or "", "hn_url": url,
-            "points": data.get("points") or 0}
+            "points": data.get("points") or 0, "trimmed": _trimmed}
 
 
 def hn_comments_section(cm):
     rows = cm["main"]
     deep = sum(1 for c in rows if c["depth"] > HN_MAX_INDENT)
-    note = "HN 全部评论 %d 条，按原站层级；缩进最多 %d 层" % (len(rows), HN_MAX_INDENT)
+    note = "HN 评论 %d 条，按原站层级；缩进最多 %d 层" % (len(rows), HN_MAX_INDENT)
     if deep:
         note += "，更深的 %d 条用 ↳层级 标注" % deep
+    if cm.get("trimmed"):
+        note += "；超过 %d 条后只保留主楼层" % HN_DEEP_LIMIT
     link = "讨论页：[%s](%s)（%d 分）。" % (cm.get("story") or "Hacker News",
                                              cm.get("hn_url") or "", cm.get("points") or 0)
     out = ["## 评论区（%d 条）" % len(rows), "", link, "", note + "。", ""]
