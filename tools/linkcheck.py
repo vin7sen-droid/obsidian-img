@@ -50,6 +50,8 @@ def check(u):
 
 
 def main():
+    if len(sys.argv) < 2 or sys.argv[1].startswith("-"):
+        sys.exit("用法: python3 linkcheck.py <md 文件> [--all] [--only-new <旧文件>]")
     md = sys.argv[1]
     t = open(md, encoding="utf-8").read()
     all_urls = sorted(set(re.findall(r"\]\((https?://[^)\s]+)\)", t)))
