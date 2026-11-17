@@ -1950,9 +1950,12 @@ def main():
         # 2026-11-17：先剥掉行内图片（外链页首段常是"图片+标题"卡片列表，摘约会抓成图链）
         _b2 = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", body)
         paras = [re.sub(r"[*_>`]", "", x.strip()) for x in _b2.split("\n")
-                 if x.strip() and not x.startswith(("#", "![", "原文："))
+                 if x.strip() and not x.startswith(("#", "![", "原文：", "- ", "* ", "|", ">"))
                  and not re.fullmatch(r"\[[^\]]*\]\([^)]*\)", x.strip())
-                 and not x.strip().startswith(("http://", "https://"))]
+                 and not x.strip().startswith(("http://", "https://"))
+                 # 含 URL 且剥掉链接后剩不到 20 字的行不能当摘要（列表里的「原文链接：…」）
+                 and not (re.search(r"https?://", x) and
+                          len(re.sub(r"https?://\S+", "", x).strip(" -：:·|")) < 20)]
         draft = draft_summary(paras)
         if draft:
             summary = draft
