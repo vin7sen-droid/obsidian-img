@@ -211,6 +211,36 @@ def to_md(fragment):
         inner = strip_tags(txt).strip()
         return "[%s](%s)" % (inner, href) if inner else txt
     s = re.sub(r"<a\b[^>]*>(.*?)</a>", _atag, s, flags=re.S | re.I)
+    def _table(m):
+        # 用户 2026-11-17 定：HTML 表格要转成 markdown 表格（此前被 strip 压成一行，数据不可读）
+        rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", m.group(0), flags=re.S | re.I)
+        grid, has_th = [], False
+        for r in rows:
+            cells = re.findall(r"<(td|th)\b[^>]*>(.*?)</\1>", r, flags=re.S | re.I)
+            if not cells:
+                continue
+            vals = []
+            for tag, c in cells:
+                if tag.lower() == "th":
+                    has_th = True
+                c = re.sub(r"<br\s*/?>", " ", c, flags=re.I)
+                txt = re.sub(r"<[^>]+>", "", c)
+                txt = htmllib.unescape(txt).replace("\u00a0", " ")
+                txt = re.sub(r"\s+", " ", txt).strip().replace("|", "\\|")
+                vals.append(txt)
+            grid.append(vals)
+        if not grid:
+            return "\n\n"
+        ncol = max(len(r) for r in grid)
+        grid = [r + [""] * (ncol - len(r)) for r in grid]
+        head = grid[0] if has_th or len(grid) > 1 else [""] * ncol
+        body = grid[1:] if (has_th or len(grid) > 1) else []
+        out = ["\n\n| " + " | ".join(head) + " |",
+               "| " + " | ".join(["---"] * ncol) + " |"]
+        for r in body:
+            out.append("| " + " | ".join(r) + " |")
+        return "\n".join(out) + "\n\n"
+    s = re.sub(r"<table\b[^>]*>.*?</table>", _table, s, flags=re.S | re.I)
     s = re.sub(r"<h1\b[^>]*>(.*?)</h1>", lambda m: "\n\n## " + strip_tags(m.group(1)) + "\n\n", s, flags=re.S | re.I)
     s = re.sub(r"<h2\b[^>]*>(.*?)</h2>", lambda m: "\n\n## " + strip_tags(m.group(1)) + "\n\n", s, flags=re.S | re.I)
     s = re.sub(r"<h3\b[^>]*>(.*?)</h3>", lambda m: "\n\n### " + strip_tags(m.group(1)) + "\n\n", s, flags=re.S | re.I)
@@ -233,6 +263,8 @@ def to_md(fragment):
     s = re.sub(r"\n{3,}", "\n\n", s)
     s = re.sub(r"\*\*[ \t]+", "**", s)
     s = re.sub(r"[ \t]+\*\*", "**", s)
+    # 表格行之间不留空行，否则 Obsidian 不渲染成表格
+    s = re.sub(r"(\|[^\n]*\|)\n(?:[ \t]*\n)+(?=\|)", r"\1\n", s)
     return s.strip()
 
 
@@ -414,6 +446,8 @@ def clean_body(md, title=""):
     lines = uniq
 
     out = "\n\n".join(lines)
+    # clean_body 按行重组会把表格行之间塞进空行，Obsidian 就不渲染成表格了（2026-11-17）
+    out = re.sub(r"(\|[^\n]*\|)\n\n(?=\|)", r"\1\n", out)
     out = re.sub(r"[*\s]*相关阅读[：:][*\s]*[-－]?\s*$", "", out, flags=re.M)
     out = re.sub(r"\n\n《[^》\n]{4,}》\s*$", "", out)
     return re.sub(r"\n{3,}", "\n\n", out).strip()
