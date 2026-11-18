@@ -1546,6 +1546,33 @@ def reddit_comments_section(cm, note_only=False):
     return "\n".join(out).rstrip()
 
 
+ZH_JS = "/root/workspace/tools/zh.mjs"
+
+
+def _translate_zh(text, timeout=600):
+    """调 zh.mjs（腾讯 Transmart + 专名/数字/URL 占位 + 共享缓存）把英文译成中文。
+
+    2026-11-19 用户定：英文文章剪藏时直接机翻落库，之后人工润色。
+    失败时原样返回（绝不因翻译失败丢正文），并打印告警。
+    """
+    if not text or not text.strip():
+        return text
+    try:
+        r = subprocess.run(["node", ZH_JS], input=text, capture_output=True,
+                           text=True, timeout=timeout)
+        out = (r.stdout or "").strip("\n")
+        if r.returncode == 0 and out.strip():
+            return out
+        print("翻译失败（返回码 %s），保留原文：%s" % (r.returncode, (r.stderr or "")[:200]))
+        return text
+    except subprocess.TimeoutExpired:
+        print("翻译超时（%ds），保留原文" % timeout)
+        return text
+    except Exception as e:
+        print("翻译异常，保留原文：%s" % e)
+        return text
+
+
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
     name = safe_name(doc["title"])
 
@@ -1883,11 +1910,19 @@ def main():
             summary = _rd_st_txt.split("\n\n")[0].strip()
     body = fix_hotlinks(body)
 
-    # 英文文章不自动翻译：只检测并强制标记待精修，由精修队员译中（2026-11-12 用户决定）
+    # 英文文章自动翻译：检测到英文时调用 zh.mjs 翻译标题/摘要/正文，再人工润色（2026-11-19 用户决定）
     _need_translate = False
     if not a.no_translate and trans.is_english(body):
         _need_translate = True
-        print("检测到英文文章：保留英文原文，已标记待精修（由精修队员译成中文）")
+        print("检测到英文文章：自动翻译中...")
+        # 翻译标题
+        title = _translate_zh(title)
+        # 翻译摘要（如果已有）
+        if summary:
+            summary = _translate_zh(summary)
+        # 翻译正文
+        body = _translate_zh(body)
+        print("自动翻译完成，待人工润色")
 
     kws = meta(page, "keywords") or ""
     _JUNK_TAG = {"业界动态", "IT资讯", "科技", "新闻", "数码", "手机", "电脑", "软件", "硬件", "互联网", "人工智能技术"}
@@ -1968,7 +2003,7 @@ def main():
 
     name, md = build(doc, final, tags_line, summary, body, cmts, auto=a.auto or _need_translate)
     if _need_translate:
-        md = md.replace("<!-- 待精修 -->", "<!-- 待精修：英文原文，请全文译成中文 -->")
+        md = md.replace("<!-- 待精修 -->", "<!-- 待精修：机翻译文，请人工润色（人名/数字/专名核对） -->")
     if a.stdout:
         print(md)
         return
