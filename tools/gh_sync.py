@@ -46,7 +46,7 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
 _BAD = [f for f in FILES if f.endswith("_dl.py") and not f.startswith("@")]
 if _BAD:
     sys.exit("gh_sync 拒绝运行：FILES 里混入了裸下载器 %s\n"
-             "下载器请用 \"@名字\" 前缀引用（放 workspace 根），不要复制进 tools/。"
+             "下载器请用 \"@路径/名字\" 前缀引用（如 @douyin_dl.py 或 @tools/bili_dl.py，@ 相对 workspace 根）。"
              % ", ".join(_BAD))
 
 
