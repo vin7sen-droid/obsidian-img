@@ -406,6 +406,9 @@ def clean_body(md, title=""):
         # 英文站的署名与发布时间行（By Ian Carlos Campbell / Nov. 17, 2026 7:00 pm EST）
         if re.match(r"^By\s+[A-Z][\w.\-' ]{2,40}$", t):
             continue
+        # 「Ian Carlos Campbell for Engadget」这类署名（中文译后会变成「某某为恩加吉特」）
+        if re.match(r"^[A-Z][\w.\-' ]{2,40}\s+for\s+[A-Z][\w.]{2,20}$", t):
+            continue
         if re.match(r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{1,2},\s+20\d{2}",
                     t) and len(t) < 40:
             continue
