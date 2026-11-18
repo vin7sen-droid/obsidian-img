@@ -10,6 +10,7 @@
     instagram.com / ig      -> ins_dl.py     （双引擎+登录态，落 /sdcard/download/ins/）
     douyin.com / iesdouyin  -> douyin_dl.py  （免签名，落 /sdcard/Download/douyin/）
     weibo.com / m.weibo.cn  -> weibo_dl.py   （免登录，落 /sdcard/Download/weibo/）
+    bilibili.com / b23.tv   -> bili_dl.py    （视频+弹幕，落 /sdcard/Download/bilibili/）
 
 抖音可直接甩 App 分享的整段文本（脚本自己抠短链）；一次传多个、混合平台均可。
 各平台脚本独立运行，输出与命名规则保持各自原样，互不影响。
@@ -28,6 +29,7 @@ ROUTES = [
     ("douyin", r"(?:v\.douyin\.com|iesdouyin\.com|[a-z]+\.douyin\.com)",
      "/root/workspace/douyin_dl.py"),
     ("weibo", r"weibo\.(?:com|cn)", "/root/workspace/weibo_dl.py"),
+    ("bilibili", r"(?:bilibili\.com|b23\.tv)", "/root/workspace/tools/bili_dl.py"),
 ]
 TIMEOUT = 900  # 秒；大视频下载慢
 
