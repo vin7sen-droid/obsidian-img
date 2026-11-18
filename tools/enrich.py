@@ -41,9 +41,24 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 # Playwright / 云浏览器集成：仅对必须 JS 渲染的站点按需启用
 # 优先级：Browserbase（需 REST 建 session）> Browserless（直接 CDP）> urllib
-BROWSERBASE_API_KEY = os.environ.get("BROWSERBASE_API_KEY")       # browserbase.com API key
-BROWSERBASE_PROJECT = os.environ.get("BROWSERBASE_PROJECT", "")   # projectId（可选）
-PLAYWRIGHT_CDP_ENDPOINT = os.environ.get("PLAYWRIGHT_CDP_ENDPOINT")  # 如 wss://chrome.browserless.io?token=xxx
+def _cred(name, env_key, default=""):
+    """凭证读取：环境变量优先，其次 ~/.config/<name>/key（600）。"""
+    v = os.environ.get(env_key)
+    if v:
+        return v
+    try:
+        with open(os.path.expanduser("~/.config/%s/key" % name), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+BROWSERBASE_API_KEY = _cred("browserbase", "BROWSERBASE_API_KEY")
+BROWSERBASE_PROJECT = _cred("browserbase/project", "BROWSERBASE_PROJECT",
+                            "f0809852-2045-451b-8b50-713c8cd39a7a")
+_bbless = _cred("browserless", "BROWSERLESS_TOKEN")
+PLAYWRIGHT_CDP_ENDPOINT = os.environ.get("PLAYWRIGHT_CDP_ENDPOINT") or (
+    ("wss://chrome.browserless.io?token=%s" % _bbless) if _bbless else "")
 PLAYWRIGHT_HOSTS = {
     "mp.weixin.qq.com",
     "www.engadget.com",
@@ -105,11 +120,13 @@ def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
         loop = asyncio.new_event_loop()
         try:
             result = loop.run_until_complete(
-                fetch_text_playwright(url, chars, pw_endpoint, timeout=timeout))
+                fetch_text_playwright(url, chars, pw_endpoint, timeout=min(timeout, 45)))
             result["sec"] = round(time.time() - t0, 1)
             if bb_sid:
-                result["engine"] = f"browserbase:{bb_sid[:8]}"
-            return result
+                result["engine"] = f"browserbase:{bb_sid[:8]}" if result.get("ok") else "browserbase:failed"
+            if result.get("ok"):
+                return result
+            # 云浏览器失败（白名单站也常能 urllib 拿到）→ 继续走 urllib 兜底
         finally:
             loop.close()
     
