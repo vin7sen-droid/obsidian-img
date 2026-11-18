@@ -345,7 +345,7 @@ def clean_body(md, title=""):
     lines, in_ad = [], False
     for ln in md.split("\n"):
         t = ln.strip().replace("\\*", "*").replace("\\_", "_").replace("\\#", "#")
-        if re.match(r"^#{0,4}\s*(熱門新聞|热门新闻|相關新聞|相关新闻|延伸閱讀|延伸阅读|推薦閱讀|推荐阅读|熱門文章|热门文章|更多相關|更多相关)", t):
+        if re.match(r"^#{0,4}\s*(熱門新聞|热门新闻|相關新聞|相关新闻|延伸閱讀|延伸阅读|推薦閱讀|推荐阅读|熱門文章|热门文章|更多相關|更多相关|推荐|推薦|recommended|Recommended|related|Related)\s*$", t):
             break   # 站点侧栏/页尾推荐位，其后的缩略图都不是正文
         if re.match(r"^广告声明", t):
             in_ad = True
@@ -389,6 +389,25 @@ def clean_body(md, title=""):
             continue
         # 快科技等站点的权限提示 + 分享按钮栏
         if re.match(r"^作者私密文章", t) or "过往内容只提供给老鸟" in t:
+            continue
+        # Engadget 等站的页头样板（2026-11-19：Add Engadget on Google: / Preferred Source / Google Discover）
+        if re.match(r"^Add\s+\S+\s+on\s+Google[：:]?$", t) or t in {"Preferred Source", "首选源"}:
+            continue
+        if re.match(r"^\[?Google Discover\]?(\(|$)", t):
+            continue
+        # 英文站页头栏目名（Engadget 的 News / AI 这类单词行）
+        if re.fullmatch(r"(News|AI|Tech|Science|Reviews|Gaming|Entertainment|Space|"
+                        r"Transport|Policy|Security|Apps|Products|Business|Culture|"
+                        r"Comment|Opinion|Analysis)", t):
+            continue
+        # 图片版权署名（mundissima/Shutterstock、Photo by X/Getty Images）
+        if re.fullmatch(r"(Photo by )?\S{1,40}\s*/\s*(Shutterstock|Getty Images|Reuters|AP|AFP|Bloomberg)", t):
+            continue
+        # 英文站的署名与发布时间行（By Ian Carlos Campbell / Nov. 17, 2026 7:00 pm EST）
+        if re.match(r"^By\s+[A-Z][\w.\-' ]{2,40}$", t):
+            continue
+        if re.match(r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{1,2},\s+20\d{2}",
+                    t) and len(t) < 40:
             continue
         if t in {"QQ空间", "复制链接", "微信扫一扫", "朋友圈", "新浪微博", "腾讯微博",
                  "QQ好友", "分享到微信", "分享到QQ"}:
@@ -1573,6 +1592,11 @@ def _translate_zh(text, timeout=600):
         return text
 
 
+def _fix_bold(t):
+    """把译文里 `** 文字 **` 的星号内空格去掉——markdown 靠紧贴才认加粗。"""
+    return re.sub(r"\*\*\s*([^*\n]{1,60}?)\s*\*\*", r"**\1**", t)
+
+
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
     name = safe_name(doc["title"])
 
@@ -1908,6 +1932,17 @@ def main():
         _rd_st_txt = body.strip()
         if len(_rd_st_txt) >= 20:
             summary = _rd_st_txt.split("\n\n")[0].strip()
+    # 2026-11-19：删掉与 meta description 完全相同的正文行（Engadget 类站的 dek 副标题，
+    # 与摘要重复且会被译两遍），比较前统一去空白与标点、忽略大小写
+    _desc = meta(page, "description") or ""
+    if _desc.strip() and len(_desc.strip()) >= 20:
+        _dn = re.sub(r"[\W_]+", "", _desc).lower()
+        _kept = []
+        for _ln in body.split("\n"):
+            if re.sub(r"[\W_]+", "", _ln).lower() == _dn:
+                continue
+            _kept.append(_ln)
+        body = "\n".join(_kept)
     body = fix_hotlinks(body)
 
     # 英文文章自动翻译：检测到英文时调用 zh.mjs 翻译标题/正文，再人工润色（2026-11-19 用户决定）
@@ -1918,6 +1953,8 @@ def main():
         print("检测到英文文章：自动翻译中...")
         title = _translate_zh(title)
         body = _translate_zh(body)
+        body = _fix_bold(body)
+        title = _fix_bold(title)
         print("自动翻译完成，待人工润色")
 
     kws = meta(page, "keywords") or ""
@@ -1994,8 +2031,13 @@ def main():
             src = next((p for p in paras if len(p) >= 30), paras[0] if paras else (doc["desc"] or ""))
             sents = re.findall(r"[^。！？!?]+[。！？!?]?", src)
             summary = "".join(sents[:2]).strip()
+        # 2026-11-19：摘要不许带 markdown 链接（截断会切在半截 URL 上），先降为纯文本
+        _st = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", summary)
+        _st = re.sub(r"https?://\S+", "", _st).strip()
+        if _st:
+            summary = _st
         if len(summary) > 160:
-            summary = summary[:157].rstrip("，、；") + "…"
+            summary = summary[:157].rstrip("，、；,. ") + "…"
 
     name, md = build(doc, final, tags_line, summary, body, cmts, auto=a.auto or _need_translate)
     if _need_translate:
