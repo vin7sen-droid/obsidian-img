@@ -93,7 +93,7 @@ def download_video(bvid, page, dst, max_height=1080):
         raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1][:200])
 
 
-def handle(bvid, force=False, res=1080):
+def handle(bvid, force=False, res=1080, danmaku_only=False):
     v = fetch_view(bvid)
     owner = re.sub(r'[\\/:*?"<>|]', "_", v["owner"])
     folder = os.path.join(BASE, owner)
@@ -106,7 +106,9 @@ def handle(bvid, force=False, res=1080):
         mp4 = os.path.join(folder, tag + ".mp4")
         xml = os.path.join(folder, tag + ".xml")
         ok_v = ok_d = True
-        if os.path.isfile(mp4) and os.path.getsize(mp4) > 8192 and not force:
+        if danmaku_only:
+            print(f"  只下弹幕 {tag}.xml")
+        elif os.path.isfile(mp4) and os.path.getsize(mp4) > 8192 and not force:
             print(f"  skip {tag}.mp4（已存在）")
         else:
             try:
@@ -138,9 +140,13 @@ def main():
     args = sys.argv[1:]
     res = 1080
     force = False
+    danmaku_only = False
     if "--force" in args:
         args = [a for a in args if a != "--force"]
         force = True
+    if "--danmaku-only" in args:
+        args = [a for a in args if a != "--danmaku-only"]
+        danmaku_only = True
     if "--res" in args:
         i = args.index("--res")
         try:
@@ -155,7 +161,7 @@ def main():
                 ln.strip() for ln in fh if ln.strip()]
     bvids = []
     for a in args:
-        for bv in parse_bvid(a):
+        for bv in parse_bvid(expand_b23(a)):
             if bv not in bvids:
                 bvids.append(bv)
     if not bvids:
@@ -165,7 +171,7 @@ def main():
     for bv in bvids:
         print(f"— {bv}")
         try:
-            if handle(bv, force=force, res=res) == 0:
+            if handle(bv, force=force, res=res, danmaku_only=danmaku_only) == 0:
                 fails += 1
         except Exception as e:
             fails += 1
