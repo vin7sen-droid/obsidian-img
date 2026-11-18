@@ -39,7 +39,10 @@ from concurrent.futures import ThreadPoolExecutor
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0 Safari/537.36")
 
-# Playwright / browserless.io 集成：仅对必须 JS 渲染的站点按需启用
+# Playwright / 云浏览器集成：仅对必须 JS 渲染的站点按需启用
+# 优先级：Browserbase（需 REST 建 session）> Browserless（直接 CDP）> urllib
+BROWSERBASE_API_KEY = os.environ.get("BROWSERBASE_API_KEY")       # browserbase.com API key
+BROWSERBASE_PROJECT = os.environ.get("BROWSERBASE_PROJECT", "")   # projectId（可选）
 PLAYWRIGHT_CDP_ENDPOINT = os.environ.get("PLAYWRIGHT_CDP_ENDPOINT")  # 如 wss://chrome.browserless.io?token=xxx
 PLAYWRIGHT_HOSTS = {
     "mp.weixin.qq.com",
@@ -83,16 +86,29 @@ def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
     2026-11-18：对 PLAYWRIGHT_HOSTS 域名若配了 CDP 端点，改用 Playwright 抓取。"""
     t0 = time.time()
     
-    # 如果配了 CDP 端点且域名在白名单，优先用 Playwright（异步跑完再回同步结果）
+    # 云浏览器分流：Browserbase 优先（REST 建 session），其次 Browserless（直接 CDP）
     host = urllib.parse.urlparse(url).netloc.lower()
-    if PLAYWRIGHT_CDP_ENDPOINT and any(h in host for h in PLAYWRIGHT_HOSTS):
-        # 在同步函数里跑异步：新建 event loop 跑完拿结果
+    pw_endpoint = None
+    bb_sid = None
+    if BROWSERBASE_API_KEY and any(h in host for h in PLAYWRIGHT_HOSTS):
+        try:
+            pw_endpoint, bb_sid = browserbase_cdp_url(BROWSERBASE_API_KEY)
+        except Exception as e:
+            pw_endpoint = None  # 建 session 失败回落 Browserless / urllib
+    elif PLAYWRIGHT_CDP_ENDPOINT and any(h in host for h in PLAYWRIGHT_HOSTS):
+        pw_endpoint = PLAYWRIGHT_CDP_ENDPOINT
+    if pw_endpoint:
         import asyncio
+        # websocket 走代理（connect.browserbase.com / chrome.browserless.io 本机直连不稳）
+        os.environ.setdefault("https_proxy", "http://127.0.0.1:7890")
+        os.environ.setdefault("HTTPS_PROXY", "http://127.0.0.1:7890")
         loop = asyncio.new_event_loop()
         try:
             result = loop.run_until_complete(
-                fetch_text_playwright(url, chars, PLAYWRIGHT_CDP_ENDPOINT, timeout=timeout))
+                fetch_text_playwright(url, chars, pw_endpoint, timeout=timeout))
             result["sec"] = round(time.time() - t0, 1)
+            if bb_sid:
+                result["engine"] = f"browserbase:{bb_sid[:8]}"
             return result
         finally:
             loop.close()
@@ -146,30 +162,27 @@ def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
 
 
 async def fetch_text_playwright(url, chars, cdp_endpoint, timeout=60):
-    """用 Playwright 通过 CDP 连接 browserless.io 抓正文（仅 JS 必需站点）。"""
+    """用 Playwright 通过 CDP 连接云浏览器抓正文（仅 JS 必需站点）。"""
     try:
         from playwright.async_api import async_playwright
     except ImportError:
         return {"ok": False, "chars": 0, "text": "", "err": "PlaywrightNotInstalled", "sec": 0}
-    
+
     t0 = time.time()
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp(cdp_endpoint, timeout=15000)
+            browser = await p.chromium.connect_over_cdp(cdp_endpoint, timeout=30000)
             page = await browser.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
-            await page.wait_for_timeout(5000)  # 等 JS 渲染完成，给复杂页面更多时间
-            
-            # 尝试提取 article 标签内容
+            await page.wait_for_timeout(5000)  # 等 JS 渲染完成
+
             article = await page.query_selector("article")
             if article:
                 text = await article.inner_text()
             else:
                 text = await page.inner_text("body")
-            
             await browser.close()
-            
-            # 简单清理
+
             text = re.sub(r"[ \t\u3000]+", " ", text)
             text = re.sub(r"\n\s*\n+", "\n", text).strip()
             cjk = len(re.findall(r"[\u4e00-\u9fa5]", text))
@@ -177,8 +190,23 @@ async def fetch_text_playwright(url, chars, cdp_endpoint, timeout=60):
             return {"ok": len(text) >= 600, "chars": len(text), "text": text[:chars],
                     "lang": lang, "sec": round(time.time() - t0, 1)}
     except Exception as e:
-        return {"ok": False, "chars": 0, "text": "", "err": f"Playwright:{type(e).__name__}", 
+        return {"ok": False, "chars": 0, "text": "", "err": f"Playwright:{type(e).__name__}",
                 "sec": round(time.time() - t0, 1)}
+
+
+def browserbase_cdp_url(api_key, timeout_s=300):
+    """创建 Browserbase session 并返回 CDP URL（wss://connect.browserbase.com?apiKey=…&sessionId=…）。
+    REST 建会话需要代理（api.browserbase.com 本机 SSL 握手超时，走 mihomo 7890）。"""
+    import urllib.request as _ur
+    proxy = _ur.ProxyHandler({"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"})
+    opener = _ur.build_opener(proxy)
+    body = json.dumps({"projectId": BROWSERBASE_PROJECT}).encode() if BROWSERBASE_PROJECT else b'{}'
+    req = _ur.Request("https://api.browserbase.com/v1/sessions", method="POST",
+                      headers={"x-bb-api-key": api_key, "Content-Type": "application/json"}, data=body)
+    with opener.open(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode())
+    sid = data["id"]
+    return f"wss://connect.browserbase.com?apiKey={api_key}&sessionId={sid}", sid
 
 
 def _desc_len(it):
