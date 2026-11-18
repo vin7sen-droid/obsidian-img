@@ -5,6 +5,7 @@
 用法:
     python3 /root/workspace/tools/bili_dl.py "<BV号或bilibili链接>" [更多...] [--res 1080]
     python3 bili_dl.py -f urls.txt [--res 720]
+    python3 bili_dl.py "<链接>" --danmaku-only        # 只下弹幕 xml，不下载视频
 
 分辨率: --res N（360/480/720/1080/1440/2160，默认 1080；超过登录权限的档位自动回退）
 
@@ -26,7 +27,7 @@ import sys
 import time
 import urllib.request
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 BASE = "/sdcard/Download/bilibili"
 UA = ("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
       "Chrome/124.0 Mobile Safari/537.36")
@@ -41,6 +42,19 @@ def _get(url, timeout=15):
 def parse_bvid(text):
     """从文本里抠出全部 BV 号（支持裸 BV 号与完整链接）。"""
     return re.findall(r"(BV[0-9A-Za-z]{10})", text or "")
+
+
+def expand_b23(text):
+    """把文本里的 b23.tv 短链跟随重定向展开并追加到文本尾部，供 parse_bvid 抽取。"""
+    out = text or ""
+    for code in re.findall(r"(?:https?://)?b23\.tv/(?!BV)([0-9A-Za-z]+)",
+                           text or ""):
+        try:
+            req = urllib.request.Request(f"https://b23.tv/{code}", headers=HDRS)
+            out += " " + urllib.request.urlopen(req, timeout=10).geturl()
+        except Exception:
+            pass
+    return out
 
 
 def fetch_view(bvid):
