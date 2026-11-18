@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-19T04:56:56+08:00",
+ "updated": "2026-11-19T07:01:33+08:00",
  "files": {
   "clip.py": {
    "sha256": "5f42ab70faf309cf89fc012ee01b3c0a179350800fc947c469f7f96ddacc3b55",
@@ -26,8 +26,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "b343548f267647f31c13137a8c8934b35c90099df519bcee0fbf0457b3bfe8a9",
-   "bytes": 15869
+   "sha256": "90069c86a6b6f389fbea5800e06ee7edc9e50f60ea3e3966f9601692017630f3",
+   "bytes": 15898
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -54,8 +54,8 @@
    "bytes": 3013
   },
   "tools/bili_dl.py": {
-   "sha256": "4fbcc73a985c7d82f5590bd758332d9f667bf5ac2f50fc74fac31c56170d13e9",
-   "bytes": 6125
+   "sha256": "89efe14a6fb3f184123fa44db24a95499e1f164f1e0151b94c539b01fd63161c",
+   "bytes": 6402
   },
   "tools/lanzou_dl.py": {
    "sha256": "267e9afe9596424591e558a8ed5efbc4f29acde4e099fe3e22929a627826453d",
