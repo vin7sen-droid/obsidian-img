@@ -1593,8 +1593,11 @@ def _translate_zh(text, timeout=600):
 
 
 def _fix_bold(t):
-    """把译文里 `** 文字 **` 的星号内空格去掉——markdown 靠紧贴才认加粗。"""
-    return re.sub(r"\*\*\s*([^*\n]{1,60}?)\s*\*\*", r"**\1**", t)
+    """译文后处理：①`** 文字 **` 星号内空格去掉（markdown 靠紧贴才认加粗）；
+    ②`##标题` 补回井号后的空格（zh.mjs 逐行翻译会把 `## ` 的空格吃掉，Obsidian 就不认标题）。"""
+    t = re.sub(r"\*\*\s*([^*\n]{1,60}?)\s*\*\*", r"**\1**", t)
+    t = re.sub(r"^(#{1,6})([^#\s])", r"\1 \2", t, flags=re.M)
+    return t
 
 
 def build(doc, url, tags_line, summary, body, cmts, auto=False):
