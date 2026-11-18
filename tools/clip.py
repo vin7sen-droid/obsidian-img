@@ -345,7 +345,7 @@ def clean_body(md, title=""):
     lines, in_ad = [], False
     for ln in md.split("\n"):
         t = ln.strip().replace("\\*", "*").replace("\\_", "_").replace("\\#", "#")
-        if re.match(r"^#{0,4}\s*(熱門新聞|热门新闻|相關新聞|相关新闻|延伸閱讀|延伸阅读|推薦閱讀|推荐阅读|熱門文章|热门文章|更多相關|更多相关|推荐|推薦|recommended|Recommended|related|Related)\s*$", t):
+        if re.match(r"^#{0,4}\s*(熱門新聞|热门新闻|相關新聞|相关新闻|延伸閱讀|延伸阅读|推薦閱讀|推荐阅读|熱門文章|热门文章|更多相關|更多相关|推荐|推薦|recommended|Recommended|related|Related|Follow topics and authors|Follow this story|关注这个故事)\s*$", t):
             break   # 站点侧栏/页尾推荐位，其后的缩略图都不是正文
         if re.match(r"^广告声明", t):
             in_ad = True
@@ -394,6 +394,23 @@ def clean_body(md, title=""):
         if re.match(r"^Add\s+\S+\s+on\s+Google[：:]?$", t) or t in {"Preferred Source", "首选源"}:
             continue
         if re.match(r"^\[?Google Discover\]?(\(|$)", t):
+            continue
+        # The Verge 页面 chrome（nuxt/duet 模板残留）：栏目胶囊、作者卡、分享行
+        if re.match(r"^\w+\s+Close\s+\w+$", t):
+            continue
+        if re.match(r"^[-*]?\s*\w+Close\w+$", t):
+            continue
+        if re.match(r"^[A-Z][\w.'-]*(\s+[A-Z][\w.'-]*){0,3}Close[A-Z]?", t) and len(t) < 40:
+            continue
+        if re.match(r"(?i)^(see|view)\s+all\b", t):
+            continue
+        if re.match(r"^-\s*(Link|Share|Gift|Save|Copy link|Comments?)\s*$", t):
+            continue
+        if re.match(r"(?i)^(contact us|news writer|staff writer)\b", t):
+            continue
+        if t.startswith("Posts from this") or t.startswith("来自这个作者") or t.startswith("此主题的帖子"):
+            continue
+        if t.startswith("Follow this ") or t.startswith("关注这个故事"):
             continue
         # 英文站页头栏目名（Engadget 的 News / AI 这类单词行）
         if re.fullmatch(r"(News|AI|Tech|Science|Reviews|Gaming|Entertainment|Space|"
@@ -1893,14 +1910,24 @@ def main():
         except Exception:
             pass
 
-    body = extract_ithome(page) if "ithome.com" in final else None
+    # 2026-11-19：The Verge 的页面 chrome（导航/作者卡/关注组件）会污染通用提取，
+    # 先按 duet--article--article-body-component 切出正文区段再走通用链路（meta 仍用整页）
+    _vpage = page
+    if "theverge.com" in final and "article-body-component" in page:
+        _vs = page.find("article-body-component")
+        _ve = page.find("Most Popular", _vs)
+        if _ve == -1:
+            _ve = page.find("duet--article--dangerously-set-cms-markup", _vs + 100)
+        if _ve > _vs:
+            _vpage = page[_vs:_ve]
+    body = extract_ithome(_vpage) if "ithome.com" in final else None
     cleaned = False          # 该 body 是否已经过 clean_body（见下方 2026-11-16 说明）
     if not body and "v2ex.com" in final:
         body = extract_v2ex(page)        # extract_v2ex 内部已 clean_body
         cleaned = bool(body)
     if not body:
-        t = extract_trafilatura(page, final) or ""
-        g = extract_generic(page) or ""
+        t = extract_trafilatura(_vpage, final) or ""
+        g = extract_generic(_vpage) or ""
         # 双跑取长：两版都先清洗再比字数（更公平）；差距很小时优先 trafilatura（结构更全）
         tc = clean_body(t, title) if t else ""
         gc = clean_body(g, title) if g else ""
