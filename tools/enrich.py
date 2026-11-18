@@ -38,6 +38,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0 Safari/537.36")
+
+# Playwright / browserless.io 集成：仅对必须 JS 渲染的站点按需启用
+PLAYWRIGHT_CDP_ENDPOINT = os.environ.get("PLAYWRIGHT_CDP_ENDPOINT")  # 如 wss://chrome.browserless.io?token=xxx
+PLAYWRIGHT_HOSTS = {
+    "mp.weixin.qq.com",
+    "www.engadget.com",
+    "www.theverge.com",
+    "www.wired.com",
+    "news.google.com",
+    "www.toutiao.com",
+}
 DROP = re.compile(r"(?is)<(script|style|nav|footer|header|aside|form)[^>]*>.*?</\1>")
 # 站点样板截断点：命中即从此处砍掉（避免「相关文章 / 关键词：」这类尾巴污染素材）
 CUT = re.compile(r"(投诉水文|我要纠错|下载IT之家APP|相关文章|关键词：|责任编辑：|【本文结束】|"
@@ -68,8 +79,24 @@ NO_RETRY = (401, 403, 404, 410)
 def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
     """抓正文。2026-11-17 修：原版无代理参数、无重试、timeout 固定 10s。
     实测直连 technologyreview 抛 URLError（网络层失败），走 7890 能拿到内容；
-    403/404 类站点（theinformation、openai）换代理照样 403，不重试。"""
+    403/404 类站点（theinformation、openai）换代理照样 403，不重试。
+    2026-11-18：对 PLAYWRIGHT_HOSTS 域名若配了 CDP 端点，改用 Playwright 抓取。"""
     t0 = time.time()
+    
+    # 如果配了 CDP 端点且域名在白名单，优先用 Playwright（异步跑完再回同步结果）
+    host = urllib.parse.urlparse(url).netloc.lower()
+    if PLAYWRIGHT_CDP_ENDPOINT and any(h in host for h in PLAYWRIGHT_HOSTS):
+        # 在同步函数里跑异步：新建 event loop 跑完拿结果
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                fetch_text_playwright(url, chars, PLAYWRIGHT_CDP_ENDPOINT, timeout=timeout))
+            result["sec"] = round(time.time() - t0, 1)
+            return result
+        finally:
+            loop.close()
+    
     opener = _opener(proxy)
     err = ""
     tries = 0
@@ -116,6 +143,42 @@ def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
             time.sleep(0.6 * tries)
     return {"ok": False, "chars": 0, "text": "", "err": err, "sec": round(time.time() - t0, 1),
             "tries": tries}
+
+
+async def fetch_text_playwright(url, chars, cdp_endpoint, timeout=60):
+    """用 Playwright 通过 CDP 连接 browserless.io 抓正文（仅 JS 必需站点）。"""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return {"ok": False, "chars": 0, "text": "", "err": "PlaywrightNotInstalled", "sec": 0}
+    
+    t0 = time.time()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp_endpoint, timeout=15000)
+            page = await browser.new_page()
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+            await page.wait_for_timeout(5000)  # 等 JS 渲染完成，给复杂页面更多时间
+            
+            # 尝试提取 article 标签内容
+            article = await page.query_selector("article")
+            if article:
+                text = await article.inner_text()
+            else:
+                text = await page.inner_text("body")
+            
+            await browser.close()
+            
+            # 简单清理
+            text = re.sub(r"[ \t\u3000]+", " ", text)
+            text = re.sub(r"\n\s*\n+", "\n", text).strip()
+            cjk = len(re.findall(r"[\u4e00-\u9fa5]", text))
+            lang = "zh" if cjk > len(text) * 0.15 else "en"
+            return {"ok": len(text) >= 600, "chars": len(text), "text": text[:chars],
+                    "lang": lang, "sec": round(time.time() - t0, 1)}
+    except Exception as e:
+        return {"ok": False, "chars": 0, "text": "", "err": f"Playwright:{type(e).__name__}", 
+                "sec": round(time.time() - t0, 1)}
 
 
 def _desc_len(it):
