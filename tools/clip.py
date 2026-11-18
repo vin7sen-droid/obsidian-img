@@ -1910,17 +1910,13 @@ def main():
             summary = _rd_st_txt.split("\n\n")[0].strip()
     body = fix_hotlinks(body)
 
-    # 英文文章自动翻译：检测到英文时调用 zh.mjs 翻译标题/摘要/正文，再人工润色（2026-11-19 用户决定）
+    # 英文文章自动翻译：检测到英文时调用 zh.mjs 翻译标题/正文，再人工润色（2026-11-19 用户决定）
+    # 注意：summary 在下方才计算，此处只翻 title/body；summary 由中文正文推导（或下方补翻）
     _need_translate = False
     if not a.no_translate and trans.is_english(body):
         _need_translate = True
         print("检测到英文文章：自动翻译中...")
-        # 翻译标题
         title = _translate_zh(title)
-        # 翻译摘要（如果已有）
-        if summary:
-            summary = _translate_zh(summary)
-        # 翻译正文
         body = _translate_zh(body)
         print("自动翻译完成，待人工润色")
 
