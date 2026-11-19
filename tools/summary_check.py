@@ -6,6 +6,7 @@
 # 输出: <workdir>/summary_人工审.md + stdout 统计；exit 恒 0（清单制）
 # SI 归一复用 xcheck.mjs 的 parseNums/parseZhNums/close（node 子进程批量跑）
 import json, sys, os, glob, re, subprocess
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 ARGS = sys.argv[1:]
 MODE = "md" if ARGS and ARGS[0] == "--md" else "workdir"   # md=剪藏笔记「摘要：」行 vs 同文件正文；workdir=日报 items 摘要 vs raw.json 原文
@@ -15,32 +16,52 @@ WORK = ARGS[0] if ARGS else "."
 DATE = sys.argv[2] if len(sys.argv) > 2 else None
 XC   = "/root/workspace/tools/xcheck.mjs"
 
+
+def norm_url(u):
+    if not u:
+        return ""
+    try:
+        p = urlsplit(str(u).strip())
+        drop = re.compile(r"^(?:utm_|ref$|from$|fbclid$|gclid$)", re.I)
+        q = urlencode([(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if not drop.search(k)])
+        return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path.rstrip("/") or "/", q, ""))
+    except Exception:
+        return str(u).strip().rstrip("/")
+
+
+def _items_from_json(d):
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        return d.get("items") or d.get("merged") or next((v for v in d.values() if isinstance(v, list)), [])
+    return []
+
+
 def load_items():
-    p = os.path.join(WORK, "merged.json")
-    if os.path.exists(p):
-        d = json.load(open(p))
-        if isinstance(d, list): return d
-        if isinstance(d, dict):
-            for v in d.values():
-                if isinstance(v, list): return v
-        return []
+    candidates = []
+    for p in (os.path.join(WORK, "merged.json"), os.path.join(WORK, "review", "merged.json")):
+        if os.path.exists(p):
+            candidates.append(p)
+    if candidates:
+        p = candidates[0]
+        return _items_from_json(json.load(open(p, encoding="utf-8"))), p
     items = []
     for f in sorted(glob.glob(os.path.join(WORK, "json", "T*.json"))):
-        items += json.load(open(f)).get("items", [])
-    return items
+        items += _items_from_json(json.load(open(f, encoding="utf-8")))
+    return items, "json/T*.json"
+
 
 def raw_index():
-    # 优先级：raw_<date>.json（显式指定）> raw.json（daily.py 全量主文件，含雷达盲区源）> raw_*.json（raw_fetch 等旧版备份）
-    cands = ([os.path.join(WORK, "raw_%s.json" % DATE)] if DATE else []) + \
-            [os.path.join(WORK, "raw.json")] + \
-            sorted(glob.glob(os.path.join(WORK, "raw_*.json")), reverse=True)
+    # 与 xcheck 一致：显式日期 raw 优先，其次 raw.json，再取最新 raw_日期。
+    cands = ([os.path.join(WORK, "raw_%s.json" % DATE)] if DATE else []) + [os.path.join(WORK, "raw.json")] + sorted(glob.glob(os.path.join(WORK, "raw_*.json")), reverse=True)
     idx = {}
     for f in cands:
-        if not os.path.exists(f): continue
-        for e in json.load(open(f)):
-            u = e.get("url") or ""
+        if not os.path.exists(f):
+            continue
+        for e in json.load(open(f, encoding="utf-8")):
+            u = norm_url(e.get("url") or "")
             if u and u not in idx:
-                idx[u] = {"title": e.get("title",""), "desc": (e.get("desc") or "").strip()}
+                idx[u] = {"title": e.get("title", ""), "desc": (e.get("desc") or "").strip()}
     return idx
 
 NODE = r'''
@@ -181,23 +202,31 @@ def main():
         open(path, "w").write("\n".join(out) + "\n")
         print("摘要数字机检(笔记): %d 篇 / flagged %d → %s" % (len(rows), len(flagged), path))
         return
-    items = load_items()
+    items, items_src = load_items()
     if not items:
-        print("摘要数字机检: workdir 无 merged.json / json/T*.json，无输入可检 → 跳过")
+        print("摘要数字机检: workdir 无 merged.json / review/merged.json / json/T*.json，无输入可检 → 跳过")
         return
+    print("摘要数字机检输入: %s / %d 条" % (items_src, len(items)))
     idx = raw_index()
     pairs, skipped = [], 0
     for it in items:
         zh_src = bool(re.search(r"[\u4e00-\u9fff]", it.get("title","")))
         if not re.search(r"\d", it.get("summary","")): skipped += 1; continue
-        # 基准=raw 原始 title+desc；source url 不在 raw 的记 miss（如抓取后追加的新源）
+        # 基准=raw 原始 title+desc；来源 URL 统一归一后索引
         bases, missing = [], []
-        for u in [it.get("url","")] + [s.get("url","") for s in it.get("sources", [])]:
-            if not u: continue
+        source_list = [it.get("url", "")] + [s.get("url", "") for s in it.get("sources", []) if isinstance(s, dict)]
+        for raw_url in source_list:
+            u = norm_url(raw_url)
+            if not u:
+                continue
             r = idx.get(u)
-            if r: bases += [r["title"], r["desc"]]
-            elif u not in missing: missing.append(u)
-        if not bases: skipped += 1; continue
+            if r:
+                bases += [r["title"], r["desc"]]
+            elif u not in missing:
+                missing.append(u)
+        if not bases:
+            skipped += 1
+            continue
         pairs.append({"title": it.get("title",""), "summary": it.get("summary",""),
                       "bases": bases, "desc_is_zh": zh_src, "missing": missing})
     res = node_check(pairs)
