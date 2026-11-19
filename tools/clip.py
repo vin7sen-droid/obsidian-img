@@ -165,6 +165,67 @@ def fetch(url, referer=None):
     return d.decode("utf-8", "replace"), r.geturl()
 
 
+
+
+def _browserless_fetch(url, timeout=60):
+    """用 browserless (Playwright CDP) 抓取 JS 页面，返回 (html, final_url)。"""
+    try:
+        import os, json, asyncio
+        from playwright.async_api import async_playwright
+    except Exception as e:
+        return None, str(e)
+    # CDP 端点：环境变量优先，否则从 token 文件拼 wss 地址（browserless.io 云端）
+    cdp = os.environ.get("PLAYWRIGHT_CDP_ENDPOINT")
+    if not cdp:
+        _tok_path = os.path.expanduser("~/.config/browserless/token")
+        try:
+            _tok = open(_tok_path).read().strip()
+            if _tok:
+                cdp = "wss://chrome.browserless.io?token=" + _tok
+        except Exception:
+            pass
+    if not cdp:
+        return None, "no CDP endpoint / browserless token"
+    async def _run():
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp)
+            page = await browser.new_page()
+            await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
+            html = await page.content()
+            final_url = page.url
+            await browser.close()
+            return html, final_url
+    try:
+        return asyncio.run(_run()), None
+    except Exception as e:
+        return None, str(e)
+
+def fetch_with_fallback(url, referer=None):
+    """
+    统一抓取入口：urllib → 失败/疑似 JS 页 → browserless。
+    返回 (html, final_url, source) 其中 source in {"urllib", "browserless"}。
+    """
+    # 第一阶段：urllib
+    html, final = fetch(url, referer)
+    # 判断是否需要兜底
+    need_fallback = False
+    if not html or len(html) < 500:
+        need_fallback = True
+    elif "text/html" not in html.lower()[:200] and "<html" not in html.lower()[:200]:
+        need_fallback = True
+    # 明显的 JS 渲染站点特征
+    js_indicators = ["__NEXT_DATA__", "__NUXT__", "data-reactroot", 'id="root"', 'id="__next"']
+    if any(ind in html for ind in js_indicators):
+        need_fallback = True
+    if not need_fallback:
+        return html, final, "urllib"
+    # 第二阶段：browserless
+    fb_html, err = _browserless_fetch(url)
+    if fb_html:
+        return fb_html, url, "browserless"
+    # 都失败
+    return html, final, "urllib_failed"
+
 def strip_tags(s):
     return re.sub(r"<[^>]+>", "", s).strip()
 
@@ -1796,14 +1857,18 @@ def main():
     _rd_pid = _reddit_pid(a.url)
     _rd_meta = reddit_post(_rd_pid) if _rd_pid else None
     if not _rd_meta:
-        page, final = fetch(a.url)
+        page, final, _src = fetch_with_fallback(a.url)
+        if _src == "browserless":
+            print("抓取通道：urllib 失败/JS 页 → browserless 兜底成功")
     else:
         _rd_st = (_rd_meta.get("selftext") or "").strip()
         if _rd_st:
             page, final = "<html></html>", _rd_meta["page"]
         else:
             try:
-                page, final = fetch(_rd_meta.get("url") or _rd_meta["page"])
+                page, final, _rs = fetch_with_fallback(_rd_meta.get("url") or _rd_meta["page"])
+                if _rs == "browserless":
+                    print("抓取通道：Reddit 外链 → browserless 兜底成功")
             except Exception as _e:
                 print("Reddit 外链正文抓取失败（%s），正文留空" % _e)
                 page, final = "<html></html>", _rd_meta["page"]
@@ -1817,7 +1882,9 @@ def main():
             _hn_url = final
             if _hn_meta["url"]:
                 try:
-                    page, final = fetch(_hn_meta["url"])
+                    page, final, _hs = fetch_with_fallback(_hn_meta["url"])
+                    if _hs == "browserless":
+                        print("抓取通道：HN 原文页 → browserless 兜底成功")
                 except Exception as _e:
                     print("HN 原文页抓取失败（%s），正文改为讨论帖摘要" % _e)
             if not _hn_meta["url"] or "news.ycombinator.com" in final:
@@ -2244,31 +2311,37 @@ def main():
         except Exception as _e:
             print("底稿写入失败（不影响笔记）：%s" % _e)
     if not a.local_images:
-        # 图片托管到 GitHub（gh-proxy 加速），失败不阻断剪藏
-        try:
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from pathlib import Path as _Path
-            import gh_img
-            _ok, _fail, _ = gh_img.process_files([_Path(path)], quiet=True, backup=_backup_or_die)
-            if _ok or _fail or _:
-                print("图片托管：新上传 %d / 失败 %d / 改写 %d 篇" % (_ok, _fail, _))
-                if _fail:
-                    print("图片托管：失败 %d 张已保留原链接（正文已落库，不受影响）" % _fail)
-        except Exception as _e:
-            print("图片托管失败（保留原链接）：%s" % _e)
+        # 两阶段（2026-11-19 用户定）：正文先落库，图片托管转后台线程，不阻塞主流程
+        def _img_stage2(_p):
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                from pathlib import Path as _Path
+                import gh_img
+                _ok, _fail, _ = gh_img.process_files([_Path(_p)], quiet=True, backup=_backup_or_die)
+                if _ok or _fail or _:
+                    print("图片托管（后台）：新上传 %d / 失败 %d / 改写 %d 篇" % (_ok, _fail, _))
+                    if _fail:
+                        print("图片托管：失败 %d 张已保留原链接（正文已落库，不受影响）" % _fail)
+            except Exception as _e:
+                print("图片托管失败（保留原链接）：%s" % _e)
+        import threading as _th
+        _th.Thread(target=_img_stage2, args=(path,), daemon=True).start()
     if a.local_images:
         try:
             from localize_images import localize
             localize(path)
         except Exception as e:
             print("图片本地化失败（保留远程链接）:", e)
-    # 标签候选提示（候选计算在 tags 段已做，这里只打印，避免重复跑）
+    # 四维状态（2026-11-19 用户定）：正文 / 评论 / 图片 / 翻译
+    _img_count = len(re.findall(r"!\[[^\]]*\]\((https?://[^)]+)\)", body))
+    _cmt_count = ("%d 条" % (len(cmts["main"]) + len(cmts["extra"]))) if cmts else "无"
+    _tr_state = ("机翻完成，待人工润色" if _need_translate else "原文（中文）") if a.no_translate is False else "跳过"
+    _img_state = ("后台托管中" if (not a.local_images and _img_count) else ("本地化" if a.local_images else "原链接")) if _img_count else "无图"
+    print("[status] 正文 %d 字（%s） | 评论 %s | 图片 %d（%s） | 翻译 %s" % (
+        len(re.sub(r"\s", "", body)), _q_level, _cmt_count, _img_count, _img_state, _tr_state))
     if _sg_msg:
         print(_sg_msg)
     print(path)
-    print("正文 %d 字 / 标签 %s / 评论 %s" % (
-        len(body), tags_line or "无",
-        ("%d 条" % (len(cmts["main"]) + len(cmts["extra"]))) if cmts else "无"))
 
 
 if __name__ == "__main__":
