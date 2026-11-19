@@ -56,11 +56,13 @@ def hasflag(argv, *names):
 
 def parse_window(argv):
     if "--since" in argv:
-        m = re.match(r"(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})",
-                     argv[argv.index("--since") + 1].strip())
-        y = datetime.now(CST).year
-        t0 = datetime(y, int(m.group(1)), int(m.group(2)),
-                      int(m.group(3)), int(m.group(4)), tzinfo=CST)
+        v = argv[argv.index("--since") + 1].strip()
+        m = re.match(r"(?:(\d{4})-)?(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})", v)
+        if not m:
+            raise SystemExit(f"✗ --since 格式应为 MM-DD HH:MM 或 YYYY-MM-DD HH:MM：{v!r}")
+        y = int(m.group(1)) if m.group(1) else datetime.now(CST).year
+        t0 = datetime(y, int(m.group(2)), int(m.group(3)),
+                      int(m.group(4)), int(m.group(5)), tzinfo=CST)
         return int(t0.timestamp()), int(datetime.now(CST).timestamp()) + 3600, t0
     date = argval(argv, "--date", default=datetime.now(CST).strftime("%Y-%m-%d"))
     y, mo, d = map(int, date.split("-"))
