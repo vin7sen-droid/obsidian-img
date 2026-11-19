@@ -13,6 +13,7 @@ API 匿名免 key、直连可用（无需代理）：
   # 科技线式：当天 0 点回溯 --window 秒 + 全量保留打 is_ai 标
   python3 hn.py --date 2026-11-16 [--min-points 100] [--window 86400] [--desc] [--dir <workdir>]
   通用：--ai filter|tag|off（默认 filter；tag=全量+is_ai 打标；off=不过滤不打标）
+        --zh 标题+desc 机翻中文打底（zh.mjs，缓存命中秒回；失败兜底原文不阻塞）
         --points 与 --min-points 互为别名；--og 与 --desc 互为别名
         无 --dir 时打印 JSON 数组（供管道）；--dir 合并 <workdir>/raw.json（URL 去重、
         原子替换、另存 raw_hn.json 备份本轮结果）
@@ -94,6 +95,53 @@ def fetch_hits(t0, t1, points, want, per=200, max_pages=10):
     return out[:need], nb
 
 
+
+ZH_MJS = "/root/workspace/tools/zh.mjs"
+
+
+def _is_zh(t):
+    if not t:
+        return True
+    cjk = len(re.findall(r"[\u4e00-\u9fa5]", t))
+    return cjk > max(len(t) * 0.3, 0)
+
+
+def translate_zh(items, timeout=240):
+    """标题+desc 经 zh.mjs 机翻中文打底；行数不齐/超时/失败一律兜底原文。"""
+    import subprocess, tempfile
+    jobs = []  # (idx, field, text)
+    for i, it in enumerate(items):
+        for field in ("title", "desc"):
+            t = (it.get(field) or "").strip()
+            if t and not _is_zh(t):
+                jobs.append((i, field, re.sub(r"\s+", " ", t)))
+    if not jobs:
+        print("zh: 无需翻译", file=sys.stderr)
+        return
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
+            tmp = f.name
+            f.write("\n".join(j[2] for j in jobs) + "\n")
+        r = subprocess.run(["node", ZH_MJS, "-f", tmp], capture_output=True,
+                           text=True, timeout=timeout)
+        out = r.stdout.rstrip("\n").split("\n")
+        if len(out) != len(jobs):
+            print(f"zh: 行数不齐 {len(out)}/{len(jobs)}，兜底原文", file=sys.stderr)
+            return
+        for (i, field, src), zh in zip(jobs, out):
+            zh = zh.strip()
+            if zh and zh != src:
+                items[i][field] = zh
+        print(f"zh: 已翻译 {len(jobs)} 行（zh.mjs）", file=sys.stderr)
+    except Exception as e:
+        print(f"zh: 翻译失败兜底原文（{e}）", file=sys.stderr)
+    finally:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+
+
 def main():
     argv = sys.argv
     if not hasflag(argv, "--since", "--date"):
@@ -149,6 +197,9 @@ def main():
                     it["desc"] = re.sub(r"\s+", " ", m.group(1)).strip()[:600]
             except Exception:
                 pass
+
+    if hasflag(argv, "--zh"):
+        translate_zh(items)
 
     ai_n = sum(1 for it in items if it["is_ai"])
     mode_txt = {"filter": "AI 主体", "tag": "全量（is_ai 打标）", "off": "全量"}[ai_mode]
