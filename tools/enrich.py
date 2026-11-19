@@ -66,6 +66,11 @@ PLAYWRIGHT_HOSTS = {
     "www.wired.com",
     "news.google.com",
     "www.toutiao.com",
+    "www.technologyreview.com",
+    "www.semianalysis.com",
+    "stratechery.com",
+    "www.bloomberg.com",
+    "www.zdnet.com",
 }
 DROP = re.compile(r"(?is)<(script|style|nav|footer|header|aside|form)[^>]*>.*?</\1>")
 # 站点样板截断点：命中即从此处砍掉（避免「相关文章 / 关键词：」这类尾巴污染素材）
