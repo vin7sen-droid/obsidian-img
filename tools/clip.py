@@ -1330,6 +1330,26 @@ def safe_name(title):
     return t or "未命名"
 
 
+_TAG_STOPWORDS = {"ai", "科技", "新闻", "智能手机", "芯片", "手机", "互联网", "数码",
+                   "公司", "报告", "研究", "行业", "市场", "全球", "新品", "发布"}
+
+def _clean_tag(t):
+    """确定性清洗单个标签：去 #/空白、去 . + 等不安全字符、限长、剔泛词。"""
+    t = (t or "").strip().lstrip("#").strip()
+    t = re.sub(r"[\s./+;,，：:（）()\[\]]", "", t)
+    if not t or len(t) > 24 or t.lower() in _TAG_STOPWORDS:
+        return ""
+    return t
+
+def _dedup_tags(tags):
+    out, seen = [], set()
+    for t in tags:
+        c = _clean_tag(t)
+        if c and c.lower() not in seen:
+            seen.add(c.lower())
+            out.append(c)
+    return out[:3]
+
 def suggest_tags(title_text, n=3):
     """按历史笔记词典给标签候选（karakeep curatedTags 思路，2026-11-17）。
     返回 (names, dup_msg, brief)；失败返回 ([], "", "")。"""
@@ -2076,8 +2096,13 @@ def main():
             nm = re.search(r'href="/go/([^"]+)"[^>]*>([^<]+)</a>', page)
             tags = [strip_tags(nm.group(2))] if nm else []
     _sg_msg = ""
+    _tag_source = ""
     if a.tags:
-        tags = a.tags.split()
+        _tag_source = "explicit"
+        tags = _dedup_tags(a.tags.split())
+    elif getattr(a, "no_tag_suggest", False):
+        tags = _dedup_tags(tags)          # inspect 模式：不调 LLM，清洗站点自带标签
+        _tag_source = "site" if tags else ""
     elif not getattr(a, "no_tag_suggest", False):
         # 2026-11-17：词典只做重复检测，不再出标签。
         # 实测词典基于字符 n-gram，只认库内见过的词——库外新标题（高通骁龙/小米 17 Ultra/
@@ -2089,19 +2114,25 @@ def main():
             from tag_llm import suggest as _llm_suggest
             _lt = _llm_suggest(title)
             if _lt:
-                tags = _lt
-                _sg_msg = "标签候选（LLM 生成，精修复核）: " + "、".join(_lt)
+                tags = _dedup_tags(_lt)
+                _tag_source = "llm:glm" if _lt else ""
+                _sg_msg = "标签候选（LLM 生成，精修复核）: " + "、".join(tags)
         except Exception as _e:
             pass
         if not tags:
             # LLM 不可用时的兜底：退回词典候选（总比站点 keywords 强）
             if _names:
-                tags = _names
-                _sg_msg = "标签候选（LLM 不可用·词典兜底，精修复核）: " + "、".join(_names)
+                tags = _dedup_tags(_names)
+                _tag_source = "dictionary"
+                _sg_msg = "标签候选（LLM 不可用·词典兜底，精修复核）: " + "、".join(tags)
         if _dup:
             _sg_msg = (_sg_msg + " | " if _sg_msg else "") + _dup
     # 2026-11-16：上限从 2 提到 3——标签规则本就是 1-3 个，tags[:2] 会把用户显式给的第三个标签丢掉
-    tags_line = " ".join("#" + t.replace(" ", "").lstrip("#") for t in tags[:3] if t.strip())
+    tags_line = " ".join("#" + t for t in tags)
+    if tags_line and _tag_source:
+        _sg_msg = (_sg_msg + " | " if _sg_msg else "") + "tag_source=%s" % _tag_source
+    elif not tags_line and a.tags:
+        print("⚠️ 标签清洗后为空（--tags 内容全是泛词/非法字符），已忽略")
     cmts = None
     if not a.no_comments:
         if _rd_pid:
@@ -2147,6 +2178,8 @@ def main():
     if _need_translate:
         md = md.replace("<!-- 待精修 -->", "<!-- 待精修：机翻译文，请人工润色（人名/数字/专名核对） -->")
     if a.stdout:
+        if _sg_msg:
+            print(_sg_msg)
         if a.inspect:
             _imgs = len(re.findall(r"!\[[^\]]*\]\((https?://[^)]+)\)", body))
             print("[inspect] 标题: %s" % title)
@@ -2219,6 +2252,8 @@ def main():
             _ok, _fail, _ = gh_img.process_files([_Path(path)], quiet=True, backup=_backup_or_die)
             if _ok or _fail or _:
                 print("图片托管：新上传 %d / 失败 %d / 改写 %d 篇" % (_ok, _fail, _))
+                if _fail:
+                    print("图片托管：失败 %d 张已保留原链接（正文已落库，不受影响）" % _fail)
         except Exception as _e:
             print("图片托管失败（保留原链接）：%s" % _e)
     if a.local_images:
