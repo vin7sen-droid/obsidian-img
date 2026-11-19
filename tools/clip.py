@@ -2325,7 +2325,9 @@ def main():
             except Exception as _e:
                 print("图片托管失败（保留原链接）：%s" % _e)
         import threading as _th
-        _th.Thread(target=_img_stage2, args=(path,), daemon=False).start()
+        _th_img = _th.Thread(target=_img_stage2, args=(path,), daemon=True)
+        _th_img.start()
+        _th_img.join(timeout=90)   # 等后台托管（最多 90s）；超时则打印提示放行，避免解释器关闭杀掉线程
     if a.local_images:
         try:
             from localize_images import localize
