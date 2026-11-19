@@ -11,7 +11,7 @@
 
 识别结构（两线版式都吃）:
   # 标题
-  > 引用块（来源说明 / 时间，可多行；含「当日风向小结」「当日总结」的连续块渲染成 digest 卡）
+  > 引用块（来源说明 / 时间，可多行；含「当日总结」「当日总结」的连续块渲染成 digest 卡）
   ## 当日焦点            → 段落卡片
   ## 一、分类（N 条）    → 条目列表
   1. **[标题](url)**  + 下一行摘要 + 下一行「（[来源](url)） 时间」   （两行式/三行式）
@@ -86,8 +86,8 @@ li .h a:hover{color:#174EA6;text-decoration:underline}
 li .s{color:#3C4043}
 li .s strong{color:#111827;font-weight:700}
 li .m{color:#5F6368;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
-li .m a.tag{text-decoration:none;color:#5F6368}
-li .m a.tag:hover{color:#3C4043;text-decoration:underline}
+li .m a.tag{background:#E8F0FE;color:#174EA6;padding:2px 9px;border-radius:11px;text-decoration:none;font-size:12.5px}
+li .m a.tag:hover{background:#D2E3FC;text-decoration:none}
 li .m a .hn{background:#ff6600;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600}
 li .m .dot{color:#C3C9D2;margin:0 1px}
 li .m .time{color:#5F6368;margin-left:2px}
@@ -213,7 +213,7 @@ def parse(lines):
             if any(k in h for k in ("今日导读", "目录")):
                 cur = None
                 continue
-            if "当日焦点" in h or "当日总结" in h or "风向小结" in h:
+            if "当日焦点" in h or "当日总结" in h or "当日风向小结" in h:
                 cur = {"head": h, "kind": "focus", "items": [], "focus": []}
             else:
                 cur = {"head": h, "kind": "items", "items": [], "focus": []}
@@ -241,11 +241,11 @@ def parse(lines):
                 continue
             if cur is not None and cur["kind"] == "focus":
                 cur["focus"].append(s)
-    # 把「> 当日风向小结 / 当日总结」连续块抽成 digest，并从 quotes 里剔除
+    # 把「> 当日总结 / 当日总结」连续块抽成 digest，并从 quotes 里剔除
     if doc["quotes"]:
         keep, buf, in_digest = [], [], False
         for q in doc["quotes"]:
-            head = ("风向小结" in q or "当日总结" in q) and len(q) < 40 and not q.startswith("时间")
+            head = ("当日总结" in q or "当日风向小结" in q) and len(q) < 40 and not q.startswith("时间")
             if head:
                 in_digest = True
                 buf = [q]
