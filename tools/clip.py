@@ -1674,6 +1674,66 @@ def _write_text(path, text):
         f.write(text)
 
 
+# ---------- 落库前质量闸（2026-11-19 用户定三项优化之一）----------
+_NAV_WORDS = ("首页", "导航", "登录", "注册", "下载客户端", "关注我们", "联系我们",
+              "Most Popular", "Subscribe", "Newsletter", "Sign in", "Log in",
+              "All Rights Reserved", "Cookie", "Privacy Policy", "Terms of")
+
+
+def body_quality(body):
+    """返回 (级别, 原因)；级别: ok / warn / fail"""
+    txt = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", body)          # 去图片
+    txt = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", txt)        # 链接降为文字
+    txt = re.sub(r"\s", "", txt)
+    if len(txt) < 100:
+        return "fail", "正文不足 100 字（疑似空壳/JS 页）"
+    if len(txt) < 300:
+        return "warn", "正文不足 300 字（疑似不完整）"
+    plain = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", body)
+    plain_lines = [ln for ln in plain.split("\n") if ln.strip()]
+    if plain_lines and sum(1 for ln in plain_lines
+                           if ln.strip().startswith(("![", "http", "["))) > len(plain_lines) * 0.8:
+        return "warn", "正文几乎全是图片/链接行"
+    nav = sum(1 for w in _NAV_WORDS if w.lower() in body.lower())
+    if nav >= 4 and len(txt) < 600:
+        return "warn", "疑似导航/样板页（命中 %d 个导航词）" % nav
+    return "ok", ""
+
+
+def quality_report(level, reason):
+    if level == "ok":
+        return None
+    tag = "⚠️" if level == "warn" else "❌"
+    return "%s 正文质量：%s" % (tag, reason)
+
+
+# ---------- 翻译验收报告（2026-11-19 三项优化之三）----------
+_BAD_TERMS = ("恩加吉特", "个人情报", "詹森·黄", "记忆体Summary:")
+
+
+def translate_check(title, body, source_is_en):
+    """打印翻译验收报告；source_is_en=False 时直接返回通过"""
+    if not source_is_en:
+        return
+    issues = []
+    en_lines = [ln for ln in (title + "\n" + body).split("\n")
+                if len(re.findall(r"[A-Za-z]", ln)) >= 25
+                and len(re.findall(r"[\u4e00-\u9fff]", ln)) < 5
+                and not re.search(r"https?://", ln)
+                and not ln.strip().startswith(("![", "#", "-", ">", "|"))]
+    if en_lines:
+        issues.append("英文残留 %d 行（首行: %s…）" % (len(en_lines), en_lines[0][:40]))
+    _src = body
+    if _BAD_TERMS:
+        bad = [t for t in _BAD_TERMS if t in body]
+        if bad:
+            issues.append("疑似坏术语：%s" % "、".join(bad))
+    if issues:
+        print("翻译检查：⚠️ %s" % "；".join(issues))
+    else:
+        print("翻译检查：通过")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
@@ -1689,10 +1749,15 @@ def main():
                     help="只重抓评论区并替换已有笔记里的 ## 评论区 段，其余内容不动")
     ap.add_argument("--summary", default=None, help="摘要；缺省取正文前 3 段第一个含数字句（2026-11-16 定），找不到回落首段前两句")
     ap.add_argument("--no-translate", action="store_true", help="英文文章不自动译中（默认会译）")
+    ap.add_argument("--inspect", action="store_true", help="只读核对：打印标题/正文长度/图片数/评论数，不翻译不传图不写盘不调标签")
     ap.add_argument("--no-tag-suggest", action="store_true", help="不打印标签候选")
     ap.add_argument("--deep", default="pick", choices=["pick", "all"],
                     help="楼中楼筛选（HN／Reddit）：pick=精选（默认，主楼全收+筛选+另存全量底稿）／all=全量不筛")
     a = ap.parse_args()
+    if getattr(a, "inspect", False):
+        a.stdout = True
+        a.no_translate = True
+        a.no_tag_suggest = True
     # 工具集同步（gh_sync.py：本机推/跟随机拉，详见该脚本头注释）
     # 2026-11-16：--stdout 是只读路径（精修/核对原文用），不该有推送副作用
     if not a.stdout:
@@ -1990,6 +2055,12 @@ def main():
         title = _fix_bold(title)
         print("自动翻译完成，待人工润色")
 
+    # 落库前正文质量闸（2026-11-19 用户定三项优化之一）
+    _q_level, _q_why = body_quality(body)
+    _qr = quality_report(_q_level, _q_why)
+    if _qr:
+        print(_qr)
+
     kws = meta(page, "keywords") or ""
     _JUNK_TAG = {"业界动态", "IT资讯", "科技", "新闻", "数码", "手机", "电脑", "软件", "硬件", "互联网", "人工智能技术"}
     # 快科技的 meta keywords 常直接等于标题（实测「国际油价创2020年来…」整句被当标签），
@@ -2076,6 +2147,15 @@ def main():
     if _need_translate:
         md = md.replace("<!-- 待精修 -->", "<!-- 待精修：机翻译文，请人工润色（人名/数字/专名核对） -->")
     if a.stdout:
+        if a.inspect:
+            _imgs = len(re.findall(r"!\[[^\]]*\]\((https?://[^)]+)\)", body))
+            print("[inspect] 标题: %s" % title)
+            print("[inspect] 正文 %d 字 / 图片 %d / 评论 %s" % (
+                len(re.sub(r"\s", "", body)), _imgs,
+                ("%d 条" % (len(cmts["main"]) + len(cmts["extra"]))) if cmts else "无"))
+            print("[inspect] 标签: %s" % (tags_line or "无"))
+            return
+        translate_check(title, body, _need_translate)
         print(md)
         return
     if a.name:
