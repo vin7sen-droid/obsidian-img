@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-20T12:05:21+08:00",
+ "updated": "2026-11-20T13:21:47+08:00",
  "files": {
   "clip.py": {
    "sha256": "6868ad05291a44d2223ccc1734b3b05878d70bb6594bf24b1ce8c056a3f37de0",
@@ -82,8 +82,8 @@
    "bytes": 4927
   },
   "xcheck.mjs": {
-   "sha256": "be74fdfbb7fe7cbf1da17e3824747473dd414ddabd9ff4b643efbb1caf10debe",
-   "bytes": 38749
+   "sha256": "855594c829e0cd9904989b6ae0a3e57f0dce5bff4acb5824422a1f5a8ac2b2ac",
+   "bytes": 40680
   },
   "draft_summary.py": {
    "sha256": "aa70fcb4b42f08db138e488ee2b35b133e5ffe893fc6f08cad0f482b2ebd777e",
