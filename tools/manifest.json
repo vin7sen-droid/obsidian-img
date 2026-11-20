@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-21T00:25:24+08:00",
+ "updated": "2026-11-21T01:42:46+08:00",
  "files": {
   "clip.py": {
    "sha256": "c80d0bbaa1a0ed4ba5dee2426f7e8765ac14419a9e29eaf59ebf557fa1c3b406",
@@ -94,8 +94,8 @@
    "bytes": 40680
   },
   "semantic_check.py": {
-   "sha256": "4e909c444e0771893072cf4b694db204d15211c5b8f478c1a084d1c0ed6a62c0",
-   "bytes": 15750
+   "sha256": "73087ccedcd02ec0a03211b29d18b056697ce29e297ebed2cdc3ab37095fdfd7",
+   "bytes": 16797
   },
   "draft_summary.py": {
    "sha256": "aa70fcb4b42f08db138e488ee2b35b133e5ffe893fc6f08cad0f482b2ebd777e",
@@ -130,8 +130,8 @@
    "bytes": 838
   },
   "translate.mjs": {
-   "sha256": "0fe28d93c12ce48d4ee4f7338f8119a0ab93f50dbc91d3ca32b7ffa6aedf4d1a",
-   "bytes": 30771
+   "sha256": "df50e86670e0af04c049818914ae95aeb0696b298d8c172718a1dc175820d42b",
+   "bytes": 31151
   },
   "name-guard.mjs": {
    "sha256": "493b1978230a88b389791bd380c9e54e4b045ddee14cd0d597166280c406aa46",
