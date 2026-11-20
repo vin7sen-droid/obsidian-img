@@ -1,9 +1,9 @@
 {
- "updated": "2026-11-20T19:44:29+08:00",
+ "updated": "2026-11-20T20:16:33+08:00",
  "files": {
   "clip.py": {
-   "sha256": "590a6b256acf88db913de20bd066d0261a953706461bcdbccb811f9701ca04d0",
-   "bytes": 103689
+   "sha256": "c80d0bbaa1a0ed4ba5dee2426f7e8765ac14419a9e29eaf59ebf557fa1c3b406",
+   "bytes": 103977
   },
   "clip_server.py": {
    "sha256": "3bf38ab5db821c7ca6c67d374f9b06bdaf797d2593ef3773b87d2bab9a438d2a",
@@ -94,8 +94,8 @@
    "bytes": 40680
   },
   "semantic_check.py": {
-   "sha256": "fabb0d8a9e0f3be5120a1a9f76a137f4483230699c77f508c4df482b41406b5b",
-   "bytes": 9332
+   "sha256": "7e4b1797500ae26b51f1eb209e7e1c77af1fde9545d339a5bab098be1bdee726",
+   "bytes": 10081
   },
   "draft_summary.py": {
    "sha256": "aa70fcb4b42f08db138e488ee2b35b133e5ffe893fc6f08cad0f482b2ebd777e",
