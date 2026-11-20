@@ -85,6 +85,10 @@ const PROTECT_WORDS = [
   // Claude Code（被译「Claude代码」）、harness（被译「线束」2 次）、Kioxia、Run:ai（被拆成「运行：ai」）
   "Neon", "Muse", "Claude Code", "harness", "Kioxia", "Run:ai",
   "Strands", "Strands Agents", "Bedrock AgentCore", "AgentCore",
+  // 2026-11-20 补：机构名（实测「Foresight's AI Salon」被引擎读成「Footer的」，属视觉近形误读）
+  // 注：Signal/ANT 这类「普通英文词形」的产品名不进表——PROTECT_RE 是大小写不敏感的，
+  // 会把 signal（信号）/ant（蚂蚁）这些普通词一起钉成英文，代价大于收益。
+  "Foresight", "Janus Henderson",
 ].filter(Boolean);
 export { PROTECT_WORDS };
 // 长词优先，避免 "Meta" 抢在 "Metadata" 前半段之类；用字母数字边界判定
