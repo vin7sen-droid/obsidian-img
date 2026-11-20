@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-20T22:14:26+08:00",
+ "updated": "2026-11-20T22:59:21+08:00",
  "files": {
   "clip.py": {
    "sha256": "c80d0bbaa1a0ed4ba5dee2426f7e8765ac14419a9e29eaf59ebf557fa1c3b406",
@@ -34,8 +34,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "adba1582c0a272555be324dd8bdf0b08b8d19b237c5dbec6b6c54a6fd5c85145",
-   "bytes": 16006
+   "sha256": "8c775b2c72b9d07d0c2b5313673d84622ce62e16d8fc57c4645c21359af02a1a",
+   "bytes": 16027
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -104,6 +104,10 @@
   "hn.py": {
    "sha256": "2da56be468fdac7abc05ca9c7e30750613f1b619873ed41349ddda2d83ced270",
    "bytes": 11236
+  },
+  "radar_semantic.py": {
+   "sha256": "a5b021a5be60fa4225135e8d5564c63c18831bd03d20a1220cd34aab785ae676",
+   "bytes": 4010
   },
   "deepl.py": {
    "sha256": "907ef8e4e9e46ac11ff02650232464efcc738511f8a48b127ce675b37b191fd6",
