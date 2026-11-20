@@ -30,12 +30,13 @@ PROMPT_HEAD = """你是中英翻译质检员。对每对「英文原句/中文�
 
 
 def _chat_once(model, messages, timeout=240, max_tokens=None):
-    # 推理模型思考档（用户 2026-11-20 定：思考改 low，防 reasoning 吃 token/拖慢）
+    # 推理模型思考档（用户 2026-11-20 实测定：默认 none —— 18 对样本三轮 none/low 判定完全相同（9/9 命中、1/9 误报），耗时 none 中位 17.0s vs low 22.5s；长文本 79 对 none 137.6s vs low 268.4s）
+    # 想复核漏检时 SEMANTIC_REASONING=low；网关不认 none 会 400 → 自动去参数重试（回落模型默认档）
     if max_tokens is None:
         max_tokens = int(os.environ.get("SEMANTIC_MAX_TOKENS", "16000"))
     body_d = {"model": model, "messages": messages,
               "max_tokens": max_tokens, "temperature": 0.1,
-              "reasoning_effort": os.environ.get("SEMANTIC_REASONING", "low")}
+              "reasoning_effort": os.environ.get("SEMANTIC_REASONING", "none")}
     body = json.dumps(body_d).encode()
     r = urllib.request.Request(BASE + "/chat/completions", data=body,
         headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"})
