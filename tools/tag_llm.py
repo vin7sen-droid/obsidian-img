@@ -16,7 +16,97 @@ BASE_F = "/root/.config/tagllm/base"
 CACHE = "/root/workspace/bak/tagllm_cache.json"
 DICT = "/root/workspace/tools/tagdict.json"
 MODELS = ["ywd/z-ai/glm-5.3-flash",        # 主：12 条样本 58%/60%，0 空响应
-          "ywd/poolside/laguna-xs-2.1"]       # 备：50%/51% 但 1.5s/篇、0 空响应（比 DeepSeek 稳）
+          "ywd/poolside/laguna-xs-2.1",       # 备：50%/51% 但 1.5s/篇、0 空响应（比 DeepSeek 稳）
+          "ywd/nvidia/nemotron-3-ultra-550b-a55b"]  # 新增备（probe 实测 1.1s 稳定，语义判定偏松）
+
+PROBE_CACHE = "/root/workspace/bak/tagllm_probe.json"
+STATS = "/root/workspace/bak/tagllm_stats.json"
+
+# 泛类词黑名单：谁都套得上的标签 = 无信息（2026-11-17 定「不要给泛类词」）
+JUNK_TAGS = {"科技", "人工智能", "AI", "芯片", "智能手机", "显卡驱动", "手机",
+             "互联网", "数码", "新闻", "行业", "科技新闻", "硬件", "软件", "产品"}
+
+
+def _record(model, title, tags):
+    """自评一次真实出标签的结果并累计到模型质量统计（零额外请求）。
+    通过 = 非空 + 至少一个标签是标题子串（贴题）+ 无泛类词。"""
+    try:
+        ok = bool(tags) and any(t.lower() in title.lower() for t in tags) \
+             and not (set(tags) & JUNK_TAGS)
+        import time
+        d = {}
+        if os.path.exists(STATS):
+            try: d = json.load(open(STATS, encoding="utf-8"))
+            except Exception: d = {}
+        s = d.setdefault(model, {"n": 0, "ok": 0})
+        s["n"] += 1
+        if ok:
+            s["ok"] += 1
+        d["_ts"] = time.time()
+        tmp = STATS + ".%d" % os.getpid()
+        json.dump(d, open(tmp, "w", encoding="utf-8"), ensure_ascii=False)
+        os.replace(tmp, STATS)
+    except Exception:
+        pass
+
+
+def _stats():
+    try:
+        d = json.load(open(STATS, encoding="utf-8"))
+        return {k: v for k, v in d.items() if not k.startswith("_")}
+    except Exception:
+        return {}
+
+
+def _rank(order):
+    """在延迟顺序之上叠加质量闸：跑够 3 次且通过率 <50% 的模型降到最后。
+    未积累统计的模型保持延迟序（先验视为可用），不影响冷启动。"""
+    st = _stats()
+    good, bad = [], []
+    for m in order:
+        s = st.get(m) or {}
+        n, ok = s.get("n", 0), s.get("ok", 0)
+        (bad if (n >= 3 and ok / n < 0.5) else good).append(m)
+    if bad:
+        print("  [tag_llm] 质量门降级：%s" % ", ".join(
+            "%s(%d/%d)" % (m.split("/")[-1], st[m]["ok"], st[m]["n"]) for m in bad))
+    return good + bad
+
+
+def _probe(timeout=20):
+    """启动探测各模型延迟（用户 2026-11-20 定：快者排前，对齐 semantic_check）。
+    结果缓存 6h（tag 场景调用频繁，全探一轮约 5-8s，不能每篇都探）。"""
+    import time
+    try:
+        c = json.load(open(PROBE_CACHE, encoding="utf-8"))
+        if time.time() - c.get("ts", 0) < 21600:
+            order = [m for m in c.get("order", []) if m in MODELS]
+            if order:
+                return order + [m for m in MODELS if m not in order]
+    except Exception:
+        pass
+    key, base = _cred()
+    if not key:
+        return list(MODELS)
+    scored = []
+    for m in MODELS:
+        t0 = time.time()
+        try:
+            _call(m, key, base, "回复OK", timeout=timeout)
+            scored.append((time.time() - t0, m))
+        except Exception:
+            pass
+    if scored:
+        scored.sort()
+        order = [m for _, m in scored] + [x for x in MODELS if x not in [y for _, y in scored]]
+        print("  [tag_llm] 模型探测：%s" % ", ".join("%s(%.1fs)" % (mm.split("/")[-1], tt) for tt, mm in scored))
+        try:
+            os.makedirs(os.path.dirname(PROBE_CACHE), exist_ok=True)
+            json.dump({"order": order, "ts": time.time()}, open(PROBE_CACHE, "w"))
+        except Exception:
+            pass
+        return order
+    return list(MODELS)
 
 
 def _cred():
@@ -102,13 +192,14 @@ def suggest(title, summary="", use_cache=True, verbose=False):
         c = _cache_get(h)
         if c is not None:
             return c
-    for model in MODELS:
+    for model in _rank(_probe()):
         for attempt in range(2):          # 空响应/异常都重试一次（中转限流会吐空 content）
             try:
                 tags = _call(model, key, base, prompt)
                 if verbose:
                     print("  [tag_llm] %s → %s" % (model, "/".join(tags) or "(空)"))
                 if tags:
+                    _record(model, title, tags)
                     _cache_put(h, tags)
                     return tags
             except Exception as e:
