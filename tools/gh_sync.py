@@ -40,7 +40,7 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py", "fu
         "draft_summary.py", "hn.py", "radar_semantic.py",
     "deepl.py", "deepl_glossary_sync.py", "mdzh.py", "note_zh.py", "inbox_xcheck.mjs",
          "translate.mjs", "name-guard.mjs", "names-extra.json",
-         "tag_suggest.py", "enrich.py",
+         "tag_suggest.py", "tag_llm.py", "tagdict.json", "enrich.py",
          # P0 同步缺口（2026-11-17 补）：日报管线必经的渲染与质检脚本，缺了换设备直接崩
          "mdhtml.py", "md2html.py", "claim_check.py", "linkcheck.py", "lookup_meta.py"]
 # 边界护栏：下载器只允许以 @ 前缀（workspace 根）引用；裸 *_dl.py = 误放 tools/，拒绝
