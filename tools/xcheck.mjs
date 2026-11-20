@@ -315,6 +315,46 @@ async function fillGoogle(pairs, ctx) {
   await Promise.all(workers);
 }
 
+// DeepL Free（2026-11-20 接入，兜底行补译第二回退）：数字准/通顺/glossary 锁 agent/token 术语；
+// key 在 /root/.config/deepl/api_key（600）或 env DEEPL_API_KEY；无 key 时静默跳过走 MyMemory。
+const DEEPL_KEY = (() => { try {
+  return process.env.DEEPL_API_KEY || fs.readFileSync("/root/.config/deepl/api_key", "utf8").trim();
+} catch { return null; } })();
+let _deeplGid;
+async function deeplGlossaryId() {
+  if (_deeplGid !== undefined) return _deeplGid;
+  try {
+    const r = await fetch("https://api-free.deepl.com/v2/glossaries", {
+      headers: { Authorization: "DeepL-Auth-Key " + DEEPL_KEY }, signal: AbortSignal.timeout(15000) });
+      const j = await r.json();
+      const arr = (j && j.glossaries) || [];
+      const hit = arr.find((g) => g.name === "clip-terms");
+      _deeplGid = hit ? hit.glossary_id : null;
+  } catch { _deeplGid = null; }
+  return _deeplGid;
+}
+async function fillDeepl(pairs, ctx) {
+  if (!DEEPL_KEY) return;
+  const todo = pairs.filter((p) => !p.g);
+  if (!todo.length) return;
+  try {
+    const gid = await deeplGlossaryId();
+    const r = await fetch("https://api-free.deepl.com/v2/translate", {
+      method: "POST",
+      headers: { Authorization: "DeepL-Auth-Key " + DEEPL_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: todo.map((p) => String(p.en).slice(0, 5000)), target_lang: "ZH", source_lang: "en",
+        preserve_formatting: true, ...(gid ? { glossary_id: gid } : {}),
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const outs = (j.translations || []).map((t) => t.text);
+    todo.forEach((p, k) => { if (outs[k]) p.g = outs[k]; });
+  } catch { /* 静默：剩余行走 MyMemory */ }
+}
+
 // MyMemory 的 de 邮箱：环境变量优先，其次读 ~/.dsh-ai-research/mm-email（600 权限，不进补丁）
 function mmEmail() {
   if (process.env.DSH_AI_RESEARCH_MM_EMAIL) return process.env.DSH_AI_RESEARCH_MM_EMAIL.trim();
@@ -598,8 +638,9 @@ export async function refillFallback(srcLines, zhLines, opts = {}) {
     consec: 0, limited: false, deadline: Date.now() + (opts.budgetMs ?? 120000) };
   ctx.sample = 999;                                          // 补译不抽样，全量走彩云
   ctx.mmSample = opts.mmSample ?? 60;                        // 回退 MyMemory 时才受抽样限制
-  for (const eng of ["caiyun", "mymemory"]) {                // 优先彩云，失败回退 MyMemory
+  for (const eng of ["caiyun", "deepl", "mymemory"]) {       // 优先彩云，失败回退 DeepL（2026-11-20 接入，glossary 锁 agent/token）→ MyMemory
     if (eng === "caiyun") await fillCaiyun(pairs, ctx);
+    else if (eng === "deepl") await fillDeepl(pairs, ctx);
     else await fillMyMemory(pairs, ctx);
     if (pairs.every((p) => p.g)) break;
   }
