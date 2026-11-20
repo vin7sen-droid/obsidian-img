@@ -39,7 +39,9 @@ API = "https://hn.algolia.com/api/v1/search"
 AI_RE = re.compile(r"\b(AI|LLM|GPT|ChatGPT|Copilot|OpenAI|Anthropic|Claude|Gemini|DeepMind|"
                    r"Nvidia|GPU|chip|model|agent|robot|transformer|inference|training|"
                    r"datacenter|data center|semiconductor|TSMC|xAI|Llama|DeepSeek|Qwen|"
-                   r"agentic|machine learning|deep learning|neural)\b", re.I)
+                   r"agentic|machine learning|deep learning|neural|"
+                   r"Genie|DaisyRose|Phi-\d|MAI-|Kimi|GLM-|Mistral|Grok|Sora|"
+                   r"prompt|token|benchmark|reasoning)\b", re.I)
 STOP_RE = re.compile(r"^(Ask HN|Tell HN|Show HN: my (side|personal) project)", re.I)
 
 
@@ -204,6 +206,11 @@ def main():
         translate_zh(items)
 
     ai_n = sum(1 for it in items if it["is_ai"])
+    if hasflag(argv, "--list-ai"):
+        print(f"\n[is_ai 清单（{ai_n} 条，合并前逐条确认）]", file=sys.stderr)
+        for it in items:
+            if it["is_ai"]:
+                print(f"  [{it['points']}★] {it['title']}  {it['hn_url']}", file=sys.stderr)
     mode_txt = {"filter": "AI 主体", "tag": "全量（is_ai 打标）", "off": "全量"}[ai_mode]
     print(f"HN Algolia: 窗口 {since_dt.strftime('%m-%d %H:%M')} 起, points>{points} → {mode_txt} {len(items)} 条"
           + (f"（其中 AI {ai_n} 条）" if ai_mode != "filter" else "")
