@@ -14,9 +14,9 @@ KEY = open("/root/.config/tagllm/key").read().strip()
 BASE = open("/root/.config/tagllm/base").read().strip()
 # 多模型回退（2026-11-20 用户定）：启动时 ping 探测延迟，快者先用；批内失败切下一个
 MODELS = ["ywd/nvidia/nemotron-3-ultra-550b-a55b",   # probe 实测最快（1.0-1.2s），判定可用
+          "ywd/minimaxai/minimax-m3.1-flash",       # 2026-11-20 渠道下线（500 get_channel_failed），保留观察
           "ywd/z-ai/glm-5.3-flash",                 # 判定质量标杆（10/10 验真 0 误报），慢/偶超时
           "ywd/stepfun-ai/step-5-preview"]          # 备（偶发截断 JSON）
-# 2026-11-21 移除 ywd/minimaxai/minimax-m3.1-flash：供应商侧渠道下线（HTTP 500 get_channel_failed，3 轮重试全失败），非本机/prompt 问题
 MODEL = MODELS[0]
 OUT_DIR = "/root/workspace/digests"
 PROMPT_HEAD = """你是中英翻译质检员。对每对「英文原句/中文译文」判断译文是否有以下问题：
