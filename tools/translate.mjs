@@ -73,6 +73,13 @@ const PROTECT_WORDS = [
   "Microduck",
   // 地名（引擎会把 Falls 音译成「福尔斯」）
   "Niagara Falls", "Falls Church",
+  // AI 专用术语：保留英文不译（用户 2026-11-20 定「ai 新闻专用词不翻译」，agents 为例）
+  // 只收两类：①agent 家族黑话（直译成「代理/智能体」不自然或非译不可）②业内通说不译的缩写。
+  // 其余 AI 术语（prompt/token/embedding/fine-tuning/multimodal/context window…）按收件箱
+  // 181 篇 IT之家文章的实际译法走中文定译，见 IDIOM_ZH 的「AI 术语（IT之家口径）」段。
+  "agents", "agentic", "agent", "multi-agent", "swarm", "agentic workflow",
+  "tokens", "token", "tokenizer", "tokenizers", "tokenization",
+  "Transformer", "transformers", "RLHF", "RLVR", "DPO", "GRPO", "SOTA",
 ].filter(Boolean);
 export { PROTECT_WORDS };
 // 长词优先，避免 "Meta" 抢在 "Metadata" 前半段之类；用字母数字边界判定
@@ -110,6 +117,39 @@ function unitZh(s) {
 // 「伪装的祝福」应为因祸得福、"picks and shovels"→「挑选和铲」应为卖铲人/基础设施供应商、
 // "no jerks culture"→「没有混蛋的文化」），整短语占位、还原定译中文，与量级词同机制。
 const IDIOM_ZH = [
+  // ── AI 术语（IT之家口径，2026-11-20）────────────────────────────────
+  // 依据：收件箱 181 篇 IT之家文章的实际译法（智能体 11 篇、提示词 5、微调 4、多模态 4、
+  // 上下文窗口 3、幻觉 2、检索增强生成 1；英文原词 agents/prompt/embedding/fine-tuning 各 0 篇）。
+  // 口径：agent 家族保留英文（PROTECT_WORDS），其余 AI 术语走下列中文定译。
+  // 长短语必须排在短短语前（IDIOM_RE 按数组顺序命中）。
+  [/retrieval[-\s]augmented\s+generation/i, "检索增强生成"],
+  [/large\s+language\s+models?/i, "大语言模型"],
+  [/reinforcement\s+learning\s+from\s+human\s+feedback/i, "基于人类反馈的强化学习"],
+  [/reasoning\s+models?/i, "推理模型"],
+  [/vision\s+models?/i, "视觉模型"],
+  [/foundation\s+models?/i, "基座模型"],
+  [/base\s+models?/i, "基础模型"],
+  [/vector\s+databases?/i, "向量数据库"],
+  [/context\s+windows?/i, "上下文窗口"],
+  [/system\s+prompts?/i, "系统提示词"],
+  [/prompt\s+injection/i, "提示词注入"],
+  [/prompt\s+engineering/i, "提示词工程"],
+  [/tool[-\s]?calling|tool\s+use/i, "工具调用"],
+  [/open[-\s]weight(?:ed)?/i, "开放权重"],
+  [/open[-\s]source/i, "开源"],
+  [/embeddings?/i, "嵌入"],
+  [/prompts?/i, "提示词"],
+  [/fine[-\s]?tun(?:e|ed|es|ing)/i, "微调"],
+  [/multimodal/i, "多模态"],
+  [/inference/i, "推理"],
+  [/diffusion/i, "扩散"],
+  [/checkpoints?/i, "检查点"],
+  [/jailbreak(?:s|ing|ed)?/i, "越狱"],
+  [/latency/i, "延迟"],
+  [/throughput/i, "吞吐量"],
+  [/attention\s+mechanisms?/i, "注意力机制"],
+  [/hallucinations?/i, "幻觉"],
+  // ── 通用习语 ─────────────────────────────────────────────────────────
   [/(?:a\s+)?blessing\s+in\s+disguise/i, "因祸得福"],
   [/picks?\s+and\s+shovels/i, "卖铲人（基础设施供应商）"],
   [/(?:doubl)(?:e|es|ed|ing)\s+down(?:\s+on)?/i, "加码"],
