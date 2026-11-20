@@ -2136,6 +2136,20 @@ def main():
     if not a.no_translate and trans.is_english(body):
         _need_translate = True
         print("检测到英文文章：自动翻译中...")
+        # 英文底稿先落盘（2026-11-20 用户定：放 Inbox/_底稿/ 供对比检查），再覆盖翻译
+        try:
+            _ddir = os.path.join(a.out, "_底稿")
+            os.makedirs(_ddir, exist_ok=True)
+            _src = title + "\n\n" + body
+            import hashlib as _h
+            _sfx = _h.sha1(_src.encode()).hexdigest()[:6]
+            _dpath = os.path.join(_ddir, "英文底稿_%s.md" % _sfx)
+            with open(_dpath, "w", encoding="utf-8") as _f:
+                _f.write("<!-- 英文底稿（机翻前原文，2026-11-20 起留存供对比检查） -->\n\n"
+                         + _src + "\n")
+            print("英文底稿：%s" % _dpath)
+        except Exception as _e:
+            print("英文底稿保存失败（不阻塞翻译）：%s" % _e)
         title = _translate_zh(title)
         body = _translate_zh(body)
         body = _fix_bold(body)
