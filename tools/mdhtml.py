@@ -88,6 +88,8 @@ li .s strong{color:#111827;font-weight:700}
 li .m{color:#5F6368;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
 li .m a.tag{background:#E8F0FE;color:#174EA6;padding:2px 9px;border-radius:11px;text-decoration:none;font-size:12.5px}
 li .m a.tag:hover{background:#D2E3FC;text-decoration:none}
+li .m a.tag-hn{background:none;color:#5F6368;padding:0;border-radius:0;font-size:13px}
+li .m a.tag-hn:hover{text-decoration:underline}
 li .m a .hn{background:#ff6600;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600}
 li .m .dot{color:#C3C9D2;margin:0 1px}
 li .m .time{color:#5F6368;margin-left:2px}
@@ -387,7 +389,8 @@ def render(doc, theme):
                 if u:
                     inner = (f"<span class='hn'>{html.escape(name)}</span>"
                              if name.startswith("Hacker News") else html.escape(name))
-                    chips.append(f"<a class='tag' href='{html.escape(u)}' target='_blank' rel='noopener'>{inner}</a>")
+                    cls = "tag-hn" if name.startswith("Hacker News") else "tag"
+                    chips.append(f"<a class='{cls}' href='{html.escape(u)}' target='_blank' rel='noopener'>{inner}</a>")
                 else:
                     chips.append(f"<span class='tag'>{html.escape(name)}</span>")
             m_html = "<span class='dot'>·</span>".join(chips)
