@@ -60,44 +60,136 @@ def _chat_once(model, messages, timeout=240, max_tokens=None):
 
 PROBE_CACHE = os.path.join(OUT_DIR, "semantic_probe.json")
 
+# 轻量质量基准（2026-11-20 加，防「快 ≠ 准」）：3 条真错译 + 3 条带陷阱的正确译文。
+# 陷阱项专测误报（SI 换算 / 时间习语 / 术语正译）——实测 minimax 曾在此类上良译误报 4/8。
+QUALITY_PROBE = [
+    {"en": "Starling Bank raised $13 billion in funding.",
+     "zh": "星灵银行筹集了10亿美元资金。", "bad": True},
+    {"en": "The company is doubling down on its paid pilots program.",
+     "zh": "该公司正在向飞行员支付报酬的项目上加倍投入。", "bad": True},
+    {"en": "Token costs dropped after the API price cut.",
+     "zh": "代币成本在API降价后下降了。", "bad": True},
+    {"en": "The company raised $1.4 trillion in committed capital.",
+     "zh": "该公司筹集了1.4万亿美元承诺资本。", "bad": False},
+    {"en": "The startup is three months away from shipping.",
+     "zh": "这家初创公司距离出货还有三个月。", "bad": False},
+    {"en": "Chiplet packaging improves yield at TSMC.",
+     "zh": "芯粒封装提升了台积电的良率。", "bad": False},
+]
 
-def probe(timeout=90):
-    """启动时 ping 各模型测延迟（用户 2026-11-20 定：探测哪个快用哪个），快者排前。
-    结果缓存 24h（2026-11-20 实测 probe 全跑 6 分钟，GLM 超时占大头）。"""
+
+def _parse_flags(raw):
+    """从模型输出里抽 JSON 数组（容忍 ```json 包裹与杂质）。"""
+    txt = (raw or "").strip()
+    if txt.startswith("```"):
+        txt = txt.strip("`").lstrip("json").strip()
+    for cand in (txt,):
+        try:
+            v = json.loads(cand)
+            return v if isinstance(v, list) else [v]
+        except Exception:
+            pass
+    m = re.search(r'\[[\s\S]*\]', txt)
+    if m:
+        try:
+            v = json.loads(m.group(0))
+            return v if isinstance(v, list) else [v]
+        except Exception:
+            pass
+    out = []
+    for mo in re.finditer(r'\{[^{}]*"idx"[^{}]*\}', txt):
+        try:
+            out.append(json.loads(mo.group(0)))
+        except Exception:
+            pass
+    return out
+
+
+def _grade(model, timeout=150):
+    """跑质量基准：一次请求同时给「延迟 + 验真成绩」。失败返回 None。
+    hit=错译命中数（满 3），fp=良译误报数（越少越好），ok=fp≤1 且 hit≥2。"""
+    import time
+    lines = ["%d. EN: %s\n   ZH: %s" % (i, p["en"], p["zh"])
+             for i, p in enumerate(QUALITY_PROBE, 1)]
+    t0 = time.time()
+    try:
+        out = _chat_once(model, [{"role": "system", "content": PROMPT_HEAD},
+                                 {"role": "user", "content": "\n".join(lines)}],
+                         timeout=timeout, max_tokens=4000)
+    except Exception as e:
+        print("[semantic] 质量基准 %s 失败：%s" % (model.split("/")[-1], type(e).__name__))
+        return None
+    secs = round(time.time() - t0, 1)
+    if not (out or "").strip():
+        print("[semantic] 质量基准 %s 返回空" % model.split("/")[-1])
+        return None
+    flagged = {f.get("idx") for f in _parse_flags(out) if isinstance(f.get("idx"), int)}
+    hit = sum(1 for i, p in enumerate(QUALITY_PROBE, 1) if p["bad"] and i in flagged)
+    fp = sum(1 for i, p in enumerate(QUALITY_PROBE, 1) if not p["bad"] and i in flagged)
+    return {"secs": secs, "hit": hit, "fp": fp, "ok": hit >= 2 and fp <= 1}
+
+
+def probe(timeout=150):
+    """启动时选模型（2026-11-20 用户定「加质量门槛」：延迟 + 质量双闸）。
+    每个模型跑一次 6 对质量基准——同一请求既给延迟也给验真成绩，
+    合格（fp≤1 且 hit≥2）的按延迟升序排前，不合格的排后（防「快 ≠ 准」把高误报模型顶到首位）。
+    结果缓存 24h。SEMANTIC_PROBE_FAST=1 只测延迟（省时间，不做质量闸）。"""
     global MODEL
     import time
     try:
         c = json.load(open(PROBE_CACHE, encoding="utf-8"))
         if time.time() - c.get("ts", 0) < 86400 and c.get("model") in MODELS:
             MODEL = c["model"]
-            print("[semantic] 用缓存探测结果 %s（%.1fs/对，%s 前有效）" % (
-                MODEL.split("/")[-1], c.get("secs", -1),
+            g = (c.get("grades") or {}).get(MODEL) or {}
+            print("[semantic] 用缓存探测结果 %s（%.1fs，命中 %s 误报 %s，%s 前有效）" % (
+                MODEL.split("/")[-1], g.get("secs", c.get("secs", -1)),
+                g.get("hit", "?"), g.get("fp", "?"),
                 time.strftime("%m-%d %H:%M", time.localtime(c["ts"] + 86400))))
             return
     except Exception:
         pass
-    scored = []
+    fast = bool(os.environ.get("SEMANTIC_PROBE_FAST"))
+    grades = {}
     for m in MODELS:
-        t0 = time.time()
-        try:
-            out = _chat_once(m, [{"role": "user", "content": "回复OK"}],
-                             timeout=timeout, max_tokens=2000)
-            if out.strip():
-                scored.append((time.time() - t0, m))
-        except Exception as e:
-            print("[semantic] 探测 %s 失败：%s" % (m, type(e).__name__))
-    if scored:
-        scored.sort()
-        MODEL = scored[0][1]
-        print("[semantic] 模型探测：%s" % ", ".join("%s(%.1fs)" % (m.split("/")[-1], t) for t, m in scored))
-        try:
-            os.makedirs(OUT_DIR, exist_ok=True)
-            json.dump({"model": MODEL, "secs": scored[0][0], "ts": time.time()},
-                      open(PROBE_CACHE, "w", encoding="utf-8"))
-        except Exception:
-            pass
-    else:
+        if fast:
+            t0 = time.time()
+            try:
+                if _chat_once(m, [{"role": "user", "content": "回复OK"}],
+                              timeout=timeout, max_tokens=2000).strip():
+                    grades[m] = {"secs": round(time.time() - t0, 1),
+                                 "hit": None, "fp": None, "ok": True}
+            except Exception as e:
+                print("[semantic] 探测 %s 失败：%s" % (m.split("/")[-1], type(e).__name__))
+            continue
+        g = _grade(m, timeout=timeout)
+        if g:
+            grades[m] = g
+    if not grades:
         print("[semantic] 探测全失败，保持默认 %s" % MODEL)
+        return
+    good = sorted([m for m, g in grades.items() if g.get("ok")],
+                  key=lambda m: grades[m]["secs"])
+    bad = sorted([m for m, g in grades.items() if not g.get("ok")],
+                 key=lambda m: (-(grades[m].get("hit") or 0), grades[m]["secs"]))
+    order = good + bad
+    MODEL = order[0]
+    print("[semantic] 模型探测：%s" % " > ".join(
+        "%s(%.1fs%s)" % (
+            m.split("/")[-1], grades[m]["secs"],
+            "" if fast else " hit%s/fp%s%s" % (
+                grades[m].get("hit"), grades[m].get("fp"),
+                "" if grades[m].get("ok") else "✗"))
+        for m in order))
+    if not good:
+        print("[semantic] 警告：无模型通过质量闸（hit≥2 且 fp≤1），按最快可用 %s 兜底"
+              % MODEL.split("/")[-1])
+    try:
+        os.makedirs(OUT_DIR, exist_ok=True)
+        json.dump({"model": MODEL, "secs": grades[MODEL]["secs"], "ts": time.time(),
+                   "grades": grades, "order": order},
+                  open(PROBE_CACHE, "w", encoding="utf-8"))
+    except Exception:
+        pass
 
 
 def chat(pairs, timeout=240):
@@ -126,7 +218,15 @@ def chat(pairs, timeout=240):
 def run(pairs, label, batch=15):
     """分批送检：每批 ≤batch 对（整篇 176 主楼层时防 token 爆），合并 flags（idx 已还原全局序号）。"""
     import math
-    if not os.environ.get("SEMANTIC_NO_PROBE"):
+    forced = os.environ.get("SEMANTIC_MODEL")
+    if forced:
+        global MODEL
+        if forced in MODELS:
+            MODEL = forced
+            print("[semantic] 强制指定模型 %s（SEMANTIC_MODEL）" % forced.split("/")[-1])
+        else:
+            print("[semantic] SEMANTIC_MODEL=%s 不在 MODELS 里，忽略" % forced)
+    elif not os.environ.get("SEMANTIC_NO_PROBE"):
         probe()
     all_flags = []
     nb = math.ceil(len(pairs) / batch) if pairs else 0
