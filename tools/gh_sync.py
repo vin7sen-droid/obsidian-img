@@ -31,7 +31,7 @@ LOCAL = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE = os.path.dirname(LOCAL)             # /root/workspace（下载器所在的根目录）
 TOKEN_FILE = "/root/.config/ghclip/token"
 BAK_SYNC = "/root/workspace/bak/sync"
-FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
+FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py", "fuzz_summary_check.py",
          "refresh_all_comments.py", "gh_sync.py", "update_check_template.md",
          "@weibo_dl.py", "@douyin_dl.py",
          "@social_dl.py", "@ins_export/ins_dl.py", "@ins_export/selfupdate.py",
