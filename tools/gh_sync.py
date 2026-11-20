@@ -38,7 +38,7 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py",
          "@tools/bili_dl.py", "@tools/lanzou_dl.py",
          "mm.mjs", "zh.mjs", "numcheck.py", "summary_check.py", "radar_spotcheck.py", "xcheck.mjs",
         "draft_summary.py", "hn.py",
-    "deepl.py", "mdzh.py", "note_zh.py", "inbox_xcheck.mjs",
+    "deepl.py", "deepl_glossary_sync.py", "mdzh.py", "note_zh.py", "inbox_xcheck.mjs",
          "translate.mjs", "name-guard.mjs", "names-extra.json",
          "tag_suggest.py", "enrich.py",
          # P0 同步缺口（2026-11-17 补）：日报管线必经的渲染与质检脚本，缺了换设备直接崩
