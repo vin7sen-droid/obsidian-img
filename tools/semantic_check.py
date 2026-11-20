@@ -8,7 +8,7 @@
 凭据: /root/.config/tagllm/{key,base}（与 tag_llm.py 同源，免费中转）。
 教训（tag_llm 实测）：推理模型 max_tokens 必须 ≥2000，否则 reasoning 吃光返空。
 """
-import json, os, sys, urllib.request
+import json, os, re, sys, urllib.request
 
 KEY = open("/root/.config/tagllm/key").read().strip()
 BASE = open("/root/.config/tagllm/base").read().strip()
@@ -138,11 +138,29 @@ def run(pairs, label, batch=15):
         txt = raw.strip()
         if txt.startswith("```"):
             txt = txt.strip("`").lstrip("json").strip()
+        flags = None
         try:
             flags = json.loads(txt)
         except Exception:
-            print("[semantic] 批 %d/%d 返回非 JSON：%s" % (b + 1, nb, raw[:120]))
-            continue
+            # salvage：LLM 输出 JSON 带杂质时，先抓整段数组，再逐个 {"idx":…} 对象提取
+            m = re.search(r'\[[\s\S]*\]', txt)
+            if m:
+                try:
+                    flags = json.loads(m.group(0))
+                except Exception:
+                    flags = None
+            if flags is None:
+                flags = []
+                for mo in re.finditer(r'\{[^{}]*"idx"[^{}]*\}', txt):
+                    try:
+                        o = json.loads(mo.group(0))
+                        if isinstance(o, dict):
+                            flags.append(o)
+                    except Exception:
+                        pass
+                if not flags:
+                    print("[semantic] 批 %d/%d 返回非 JSON：%s" % (b + 1, nb, raw[:120]))
+                    continue
         if not isinstance(flags, list):
             flags = [flags]
         for f in flags:
