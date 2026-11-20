@@ -37,7 +37,7 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py", "fu
          "@social_dl.py", "@ins_export/ins_dl.py", "@ins_export/selfupdate.py",
          "@tools/bili_dl.py", "@tools/lanzou_dl.py",
          "mm.mjs", "zh.mjs", "numcheck.py", "summary_check.py", "radar_spotcheck.py", "xcheck.mjs", "semantic_check.py",
-        "draft_summary.py", "hn.py", "radar_semantic.py",
+        "draft_summary.py", "hn.py", "radar_semantic.py", "radar_fixzh.py",
     "deepl.py", "deepl_glossary_sync.py", "mdzh.py", "note_zh.py", "inbox_xcheck.mjs",
          "translate.mjs", "name-guard.mjs", "names-extra.json",
          "tag_suggest.py", "tag_llm.py", "tagdict.json", "enrich.py",
