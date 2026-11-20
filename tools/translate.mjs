@@ -80,6 +80,11 @@ const PROTECT_WORDS = [
   "agents", "agentic", "agent", "multi-agent", "swarm", "agentic workflow",
   "tokens", "token", "tokenizer", "tokenizers", "tokenization",
   "Transformer", "transformers", "RLHF", "RLVR", "DPO", "GRPO", "SOTA",
+  // 2026-11-20 语义初筛实测补（60 条术语类 flagged 里重复出现的专名/术语）：
+  // Neon（Gemini 4 Neon 被译「氖/氖灯」4 次）、Muse（Meta Muse 被译「缪斯/博物馆式」3 次）、
+  // Claude Code（被译「Claude代码」）、harness（被译「线束」2 次）、Kioxia、Run:ai（被拆成「运行：ai」）
+  "Neon", "Muse", "Claude Code", "harness", "Kioxia", "Run:ai",
+  "Strands", "Strands Agents", "Bedrock AgentCore", "AgentCore",
 ].filter(Boolean);
 export { PROTECT_WORDS };
 // 长词优先，避免 "Meta" 抢在 "Metadata" 前半段之类；用字母数字边界判定
@@ -122,6 +127,19 @@ const IDIOM_ZH = [
   // 上下文窗口 3、幻觉 2、检索增强生成 1；英文原词 agents/prompt/embedding/fine-tuning 各 0 篇）。
   // 口径：agent 家族保留英文（PROTECT_WORDS），其余 AI 术语走下列中文定译。
   // 长短语必须排在短短语前（IDIOM_RE 按数组顺序命中）。
+  // ── 2026-11-20 语义初筛补的术语定译（都是 11-20 期实测真错，重复出现或高频的才进表）──
+  [/open[-\s]weight\s+models?/i, "开放权重模型"],
+  [/chief\s+legal\s+officer/i, "首席法务官"],
+  [/pre[-\s]seed\s+(?:funding|round)/i, "种子前轮融资"],
+  [/compute\s+crunch/i, "算力紧张"],
+  [/kill\s+switch/i, "急停开关"],
+  [/AI\s+washing/i, "AI 包装"],
+  [/left\s+on\s+the\s+table/i, "白白错失"],
+  [/lift(?:s|ed|ing)?\s+the\s+boat/i, "带动整个板块"],
+  [/attys\b/i, "律师"],
+  [/handoverism/i, "AI 交接主义"],
+  [/GPU\s+fractioning/i, "GPU 切分"],
+  [/\bcolo\b/i, "托管数据中心"],
   [/retrieval[-\s]augmented\s+generation/i, "检索增强生成"],
   [/large\s+language\s+models?/i, "大语言模型"],
   [/reinforcement\s+learning\s+from\s+human\s+feedback/i, "基于人类反馈的强化学习"],
@@ -155,7 +173,9 @@ const IDIOM_ZH = [
   [/(?:doubl)(?:e|es|ed|ing)\s+down(?:\s+on)?/i, "加码"],
   [/game\s+changer/i, "游戏规则改变者"],
   [/silver\s+lining/i, "一线希望"],
-  [/moonshot/i, "登月式豪赌"],
+  // 「moonshot」= 登月式豪赌（大手笔押注）；但公司名 Moonshot AI 必须保留英文
+  // （2026-11-20 实测：无差别规则把「Moonshot AI Cancels $150M…」译成「登月式豪赌人工智能取消…」）
+  [/(?<![\w-])moonshot(?!\s*(?:AI|ai\b|\s*人工智能))/i, "登月式豪赌"],
   [/sea\s+change/i, "根本性转变"],
   [/paradigm\s+shift/i, "范式转变"],
   [/elephant\s+in\s+the\s+room/i, "众人避谈的问题"],
