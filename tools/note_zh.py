@@ -74,6 +74,8 @@ def main():
     ap.add_argument("-o", "--out")
     ap.add_argument("--body", action="store_true", help="连正文一起翻")
     ap.add_argument("--xcheck", action="store_true")
+    ap.add_argument("--semantic", action="store_true",
+                    help="翻完跑 LLM 语义/文笔初筛（semantic_check.py，成对送 GLM）")
     a = ap.parse_args()
 
     text = open(a.note, encoding="utf-8").read()
@@ -137,6 +139,30 @@ def main():
                 os.remove(pj)
             except OSError:
                 pass
+
+    if getattr(a, "semantic", False) and pairs:
+        # LLM 语义/文笔初筛（2026-11-20 用户批）：成对送 GLM，flagged 清单落 digests/
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            "semantic_check", os.path.join(TOOLS, "semantic_check.py"))
+        _sc = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_sc)
+        import datetime as _dt
+        flags = _sc.run(pairs, os.path.basename(a.note))
+        if flags:
+            stamp = _dt.datetime.now().strftime("%Y-%m-%d")
+            outp = os.path.join(_sc.OUT_DIR,
+                                "%s_笔记译文_语义审.md" % stamp)
+            with open(outp, "w", encoding="utf-8") as f:
+                f.write("# 笔记译文语义审（%s）\n\n来源：%s\n\n"
+                        % (stamp, os.path.basename(a.note)))
+                for fl in flags:
+                    i = fl.get("idx", 0) - 1
+                    if 0 <= i < len(pairs):
+                        f.write("- [%s] %s\n  - EN: %s\n  - ZH: %s\n\n"
+                                % (fl.get("type"), fl.get("why"),
+                                   pairs[i]["en"][:160], pairs[i]["zh"][:160]))
+            print("语义审清单：%s" % outp)
 
 
 if __name__ == "__main__":
