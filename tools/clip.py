@@ -2137,15 +2137,18 @@ def main():
         _need_translate = True
         print("检测到英文文章：自动翻译中...")
         # 英文底稿先落盘（2026-11-20 用户定：放 Inbox/_底稿/ 供对比检查），再覆盖翻译
+        # 文件名带英文标题前 30 字（safe_name 净化）+ sha1 前 6 位，头部注释带原文 URL 可反查
         try:
             _ddir = os.path.join(a.out, "_底稿")
             os.makedirs(_ddir, exist_ok=True)
             _src = title + "\n\n" + body
             import hashlib as _h
             _sfx = _h.sha1(_src.encode()).hexdigest()[:6]
-            _dpath = os.path.join(_ddir, "英文底稿_%s.md" % _sfx)
+            _st = safe_name(title)[:30] or "untitled"
+            _dpath = os.path.join(_ddir, "英文底稿_%s_%s.md" % (_st, _sfx))
             with open(_dpath, "w", encoding="utf-8") as _f:
-                _f.write("<!-- 英文底稿（机翻前原文，2026-11-20 起留存供对比检查） -->\n\n"
+                _f.write("<!-- 英文底稿（机翻前原文，供与中文笔记对照检查） ｜ 原文: %s ｜ 抓取: %s -->\n\n"
+                         % (a.url, datetime.now().strftime("%Y-%m-%d %H:%M"))
                          + _src + "\n")
             print("英文底稿：%s" % _dpath)
         except Exception as _e:
