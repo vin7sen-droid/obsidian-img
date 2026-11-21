@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-21T09:05:52+08:00",
+ "updated": "2026-11-21T14:36:51+08:00",
  "files": {
   "clip.py": {
    "sha256": "c80d0bbaa1a0ed4ba5dee2426f7e8765ac14419a9e29eaf59ebf557fa1c3b406",
@@ -110,8 +110,8 @@
    "bytes": 4010
   },
   "radar_fixzh.py": {
-   "sha256": "5b54fb167e314affd90a46b6ea6dc5fca511448c8f82396e8416b343d4783507",
-   "bytes": 5576
+   "sha256": "20dc8309567aceb0f8b7d8a50c6aecfb431f67274ad5ba48b71f28c535d451a3",
+   "bytes": 6338
   },
   "deepl.py": {
    "sha256": "907ef8e4e9e46ac11ff02650232464efcc738511f8a48b127ce675b37b191fd6",
@@ -134,8 +134,8 @@
    "bytes": 838
   },
   "translate.mjs": {
-   "sha256": "df50e86670e0af04c049818914ae95aeb0696b298d8c172718a1dc175820d42b",
-   "bytes": 31151
+   "sha256": "37799d8363f241892bc9db0bce4479e3a4e813e5602c44082d87f4c874d5507b",
+   "bytes": 32845
   },
   "name-guard.mjs": {
    "sha256": "493b1978230a88b389791bd380c9e54e4b045ddee14cd0d597166280c406aa46",
