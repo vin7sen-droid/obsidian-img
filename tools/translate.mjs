@@ -45,6 +45,8 @@ const TEXT_MAX_CHARS = 1200;    // 单条文本上限，超出截断（标题不
 // Gemini 4 Hydrogen→「双子座4号氢气」。翻前把专名换成 zqx<N>zqx 占位符
 // （实测腾讯会原样保留该 token），翻完再还原，专名就不会被译坏。
 const PROTECT_WORDS = [
+  // 播客 / 节目 / 栏目名（2026-11-21：No Priors 被译「没有前科」）
+  "No Priors", "Latent Space", "Hard Fork", "All-In",
   // 公司 / 机构
   "OpenAI", "Anthropic", "Google", "DeepMind", "Meta", "Microsoft", "Apple", "Amazon", "AWS",
   "NVIDIA", "AMD", "Intel", "TSMC", "Samsung", "Qualcomm", "Broadcom", "ARM", "xAI", "Mistral", "Cohere",
@@ -126,6 +128,12 @@ function unitZh(s) {
 // 「伪装的祝福」应为因祸得福、"picks and shovels"→「挑选和铲」应为卖铲人/基础设施供应商、
 // "no jerks culture"→「没有混蛋的文化」），整短语占位、还原定译中文，与量级词同机制。
 const IDIOM_ZH = [
+  // ── 2026-11-21 语义初筛/xcheck 真错补表（11-21 期实测，都是重复出现的机翻硬伤）──
+  [/\bwhite[- ]?knuckle(d|s|ing)?\b/gi, "惊心动魄"],          // "白关节" Nvidia时期 → 惊心动魄的英伟达时期
+  [/\bIPO\s+bust\b/gi, "IPO 风波"],                            // IPO bust → 破产 ✗
+  [/\bAI\s+wipeout\b/gi, "AI 市值蒸发"],                       // AI Wipeout 英文残留
+  [/\b(hooked|hooks)\s+on\b/gi, "迷上"],                        // a world hooked on Claude → 上钩上 ✗
+  [/\bunravel(s|ed|ing)?\b/gi, "瓦解"],                          // AI trade unravels → 贸易解开 ✗
   // ── AI 术语（IT之家口径，2026-11-20）────────────────────────────────
   // 依据：收件箱 181 篇 IT之家文章的实际译法（智能体 11 篇、提示词 5、微调 4、多模态 4、
   // 上下文窗口 3、幻觉 2、检索增强生成 1；英文原词 agents/prompt/embedding/fine-tuning 各 0 篇）。
@@ -396,7 +404,18 @@ function buildBatches(todo) {
 // 引擎怪癖归一：小写动词 falls 会被音译成「福尔斯」（引擎当 Falls 专名），归一成 declines。
 // 必须在 protect 之前替换，缓存 key 仍用原文；"Niagara Falls" 大写不动（无 i 标志）。
 // 2026-11-16：原只在 translateRes 里做、translateTexts 缺失 → 两条通道行为不一致，抽到公共层。
-const normFalls = (t) => t.replace(/\bfalls\b/g, "declines");
+// 2026-11-21 修：标题里首字母大写的 "Falls"（Stock Falls Near IPO Price）原正则无 i 标志匹配不到，
+// 仍被音译「福尔斯」→ 改用 gi + 真瀑布专名白名单占位保护（Niagara/Great/Idaho/Sioux Falls、Falls Church）。
+const FALLS_PROPER = /\b(Niagara|Great|Idaho|Sioux|Chippewa|Twin|Klamath|Falls\s+Church)\s+Falls\b/gi;
+const normFalls = (t) => {
+  const bag = [];
+  let o = t.replace(FALLS_PROPER, (m) => { bag.push(m); return "\u0000F" + (bag.length - 1) + "\u0000"; });
+  o = o.replace(/\bfalls\b/gi, "declines");
+  // 金额 + raise 的 raise 是「融资」不是「加薪」（after a $20B raise → 加薪 ✗）：
+  // IDIOM 机制只回固定串、不支持反向引用，所以这里改成英文等价写法再交给引擎。
+  o = o.replace(/([$€£]\s?\d[\d,.]*\s*(?:billion|million|trillion|[KMBT])?)\s+raise\b/gi, "$1 funding round");
+  return o.replace(/\u0000F(\d+)\u0000/g, (m, i) => bag[+i]);
+};
 
 /**
  * 统一的批处理循环（2026-11-16 抽取）：protect → 请求（2 次重试）→ restore →
