@@ -81,10 +81,23 @@ def main():
     if not rows:
         print("清单为空")
         sys.exit(0)
-    sc = _load()
-    model = sc.MODELS[0]
+    fx = md_path.replace(".md", "_fixed.json")
+    # 已有修正且覆盖本轮清单的 idx 时直接复用，不重跑 LLM（LLM 会抖、失败会白等一轮）
+    if os.path.exists(fx) and "--force" not in sys.argv:
+        try:
+            prev = json.load(open(fx, encoding="utf-8"))
+            have = {str(r.get("idx")) for r in prev}
+            need = {r["idx"] for r in rows}
+            if prev and need <= have:
+                print("[fix] 复用已有修正 %d 条 → %s（不重跑 LLM；要重跑加 --force）" % (len(prev), fx))
+                out = prev
+                rows = []  # 跳过下面的 LLM 循环
+        except Exception as e:
+            print("[fix] 既有 fixed.json 不可用（%s），重跑 LLM" % str(e)[:60])
+    sc = _load() if rows else None
+    model = sc.MODELS[0] if sc else ""
     B = 10
-    out = []
+    out = out if not rows else []
     for i in range(0, len(rows), B):
         chunk = rows[i:i + B]
         got = fix_batch(sc, model, chunk)
@@ -98,7 +111,6 @@ def main():
                 miss += 1
         print("[fix] 批 %d/%d：%d 条，重写 %d，漏 %d" %
               (i // B + 1, (len(rows) + B - 1) // B, len(chunk), len(chunk) - miss, miss))
-    fx = md_path.replace(".md", "_fixed.json")
     json.dump(out, open(fx, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print("[fix] 共 %d 条 → %s" % (len(out), fx))
 
