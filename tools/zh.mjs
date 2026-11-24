@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 // 通用英译中 CLI —— 复用雷达翻译通道（腾讯 Transmart + 专名保护 + 共享缓存）
-// 真源模块：/root/workspace/tools/{translate.mjs, name-guard.mjs}（2026-11-15 从插件目录迁出）
+// 真源模块：本目录 translate.mjs / name-guard.mjs（打包版与脚本同目录）
 //
 // 用法：
-//   node /root/workspace/tools/zh.mjs "OpenAI ships a new model"
-//   node /root/workspace/tools/zh.mjs -f article.txt [-o article.zh.txt]
-//   cat lines.txt | node /root/workspace/tools/zh.mjs
-//   node /root/workspace/tools/zh.mjs --fresh -f article.txt      # 不读/不写共享缓存（重测可疑译文）
+//   node zh.mjs "OpenAI ships a new model"
+//   node zh.mjs -f article.txt [-o article.zh.txt]
+//   cat lines.txt | node zh.mjs
+//   node zh.mjs --fresh -f article.txt      # 不读/不写共享缓存（重测可疑译文）
 //
 // 行为：逐行翻译，空行原样保留，已有的中文行原样输出（不翻译）；翻译失败的行原样输出。
 // 缓存：~/.dsh-ai-research/translate-cache.json（与雷达共用，重复文本零请求）。
 //   ⚠️ 缓存 key=原文：TM 错译会一直命中，重测可疑译文必须 --fresh（否则只会拿到同一个错译）。
 //
-// 2026-11-15 三项增强（AWS SageMaker 篇实测，数字错译 51→7 处且零数值错误，见 /root/workspace/tests/REPORT.md）：
+// 2026-11-15 三项增强（AWS SageMaker 篇实测，数字错译 51→7 处且零数值错误，见 tests/REPORT.md）：
 //   ① 数字/型号 token 占位（NUMA…NUMZ）——价格、百分比、千分位、版本号、实例型号完全不过引擎
 //   ② markdown 代码围栏（```）内整段跳过翻译
 //   ③ 行数守恒——非空输入行必须得到非空译文，否则单行重翻兜底
@@ -30,9 +30,29 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
-const MOD = "/root/workspace/tools/translate.mjs";
-const GUARD = "/root/workspace/tools/name-guard.mjs";
+// ---------- 代理（2026-11-21 ai-news-daily 版定制，2026-11-23 合并进真源）----------
+// Node 原生 fetch（undici）默认不读 http(s)_proxy；node ≥24 带 --use-env-proxy 才会读。
+// 实测（2026-11-21）：腾讯 Transmart 走 127.0.0.1:7890 反而翻不出来（境外出口被挡），
+// 所以默认仍直连，只在显式要求时启用：
+//   ZH_ENV_PROXY=1 node zh.mjs ...   或   node zh.mjs --env-proxy ...
+// 启用后若代理变量存在，就用 --use-env-proxy 自重启一次（argv/stdin 原样透传）。
+// 等价写法（不动脚本）：node --use-env-proxy zh.mjs ...
+// 只想让墙外域名走代理：设 NO_PROXY=transmart.qq.com（Node 按 NO_PROXY 放行）。
+const PROXY_KEYS = ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"];
+const wantProxy = PROXY_KEYS.some((k) => (process.env[k] || "").trim());
+const envProxyOn = process.env.ZH_ENV_PROXY === "1" || process.argv.includes("--env-proxy");
+if (envProxyOn && wantProxy && !process.execArgv.includes("--use-env-proxy") && !process.argv.includes("--no-env-proxy")) {
+  const r = spawnSync(process.execPath, ["--use-env-proxy", ...process.argv.slice(1)], {
+    stdio: "inherit",
+    env: process.env,
+  });
+  if (!r.error) process.exit(r.status ?? 1);
+}
+
+const MOD = path.join(path.dirname(new URL(import.meta.url).pathname), "translate.mjs");
+const GUARD = path.join(path.dirname(new URL(import.meta.url).pathname), "name-guard.mjs");
 
 // ---------- 参数 ----------
 const argv = process.argv.slice(2);
@@ -51,6 +71,8 @@ if (hasFlag("-h", "--help")) {
   -f, --file <路径>   从文件读入
   -o, --out <路径>    写到文件（缺省 stdout）
   --fresh, --no-cache 不读不写共享缓存（重测可疑/坏译时用）
+  --env-proxy         读 http(s)_proxy（=ZH_ENV_PROXY=1，内部以 node --use-env-proxy 自重启）
+  --no-env-proxy      强制直连，忽略代理变量
   -h, --help          显示本帮助
 环境：
   ZH_VERBOSE=1        打印进度到 stderr
@@ -73,7 +95,7 @@ const { translateTexts } = await import(MOD);
 // ---------- 读入 ----------
 const VALUE_OPTS = new Set(["-f", "--file", "-o", "--out"]);
 // 只剔除认识的开关；其余以 - 开头的字符串当正文（"−5% inflation" 这类不能被静默吞掉）
-const BARE_FLAGS = new Set(["--fresh", "--no-cache", "-h", "--help"]);
+const BARE_FLAGS = new Set(["--fresh", "--no-cache", "-h", "--help", "--env-proxy", "--no-env-proxy", "--use-env-proxy"]);
 const positional = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
