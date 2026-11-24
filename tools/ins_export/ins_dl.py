@@ -45,7 +45,7 @@ GD_CONFIG = os.path.expanduser("~/.config/gallery-dl/config.json")
 STORY_RE = re.compile(r"/stories/([A-Za-z0-9_.]+)/(\d+)")
 
 # ---------- 版本检查提示（只提示不下载；24h 最多查一次；失败静默） ----------
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 UPDATE_CHECK_URL = ("https://api.github.com/repos/vin7sen-droid/obsidian-img/"
                     "contents/tools/ins_dl.json?ref=main")  # 直查 API，gh-proxy 有 CDN 缓存会滞后
 GH_TOKEN_FILE = "/root/.config/ghclip/token"  # 可选：有则 5000 次/小时
@@ -102,10 +102,11 @@ def parse_shortcode(url):
     return m.group(1) if m else None
 
 
-def load_cookies():
+def load_cookies(cookie_file=None):
     """读取登录 cookie；无文件或格式不对返回 None。"""
+    path = cookie_file or COOKIE_FILE
     try:
-        with open(COOKIE_FILE, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             ck = json.load(fh)
         if isinstance(ck, dict) and ck.get("sessionid"):
             return ck
@@ -340,6 +341,7 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"输出根目录（默认 {DEFAULT_OUT}）")
     ap.add_argument("--force", action="store_true", help="已存在也重新下载")
     ap.add_argument("--version", action="version", version="ins_dl " + VERSION)
+    ap.add_argument("--cookie-file", default=None, help="指定 Instagram cookie JSON 路径（默认 ~/.config/instagram/cookies.json）")
     ap.add_argument("--no-update-check", action="store_true", help="跳过远端版本检查")
     args = ap.parse_args()
     if not args.no_update_check:
@@ -353,13 +355,15 @@ def main():
         ap.print_help()
         return
 
-    cookies = load_cookies()
+    cookies = load_cookies(args.cookie_file)
     ctx = instaloader.Instaloader().context
     if cookies:
         apply_cookie_instaloader(ctx, cookies)
         ensure_gallerydl_config(cookies)
     else:
         print("（免登录模式；受限内容会失败，cookie 用法见文件头注释）", file=sys.stderr)
+        print("  获取 sessionid：浏览器登录 instagram.com -> F12 -> Application -> Cookies -> 复制 sessionid 值")
+        print("  写入 ~/.config/instagram/cookies.json：{\"sessionid\": \"xxx\"} 即可解锁受限/私密帖")
 
     total = 0
     for url in urls:
