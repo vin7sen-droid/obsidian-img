@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""numcheck.py —— 薄转发（单一真源 /root/workspace/tools/xcheck.mjs 的 numDiff）
+"""numcheck.py —— 薄转发（单一真源 scripts/xcheck.mjs 的 numDiff）
 
 数字回源校验：原文数字 vs 译文数字，按 SI 归一比对，输出 missing / extra / scale_risk。
 用法: python3 numcheck.py <原文.txt> <译文.txt>
@@ -13,7 +13,7 @@ import os
 import sys
 import subprocess
 
-XCHECK = "/root/workspace/tools/xcheck.mjs"
+XCHECK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xcheck.mjs")
 
 if len(sys.argv) < 3:
     print(__doc__.strip(), file=sys.stderr)
