@@ -43,6 +43,7 @@ FILES = ["clip.py", "clip_server.py", "gh_img.py", "title_fix.py", "bak.py", "fu
          "tag_suggest.py", "tag_llm.py", "tagdict.json", "enrich.py",
          # Firecrawl 抓取链（2026-11-24 接入）：缺了换设备日报雷达/正文补料直接崩
          "firecrawl.py", "firecrawl_cache.py", "radar_firecrawl.py", "gnews_url.py",
+         "daily.py",
          # P0 同步缺口（2026-11-17 补）：日报管线必经的渲染与质检脚本，缺了换设备直接崩
          "mdhtml.py", "md2html.py", "claim_check.py", "linkcheck.py", "lookup_meta.py"]
 # 边界护栏：下载器只允许以 @ 前缀（workspace 根）引用；裸 *_dl.py = 误放 tools/，拒绝
