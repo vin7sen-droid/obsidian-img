@@ -36,11 +36,24 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+# 确保真源目录在 sys.path 中（本文件被复制到别处运行时也能 import firecrawl）
+_TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+for _p in (_TOOLS_DIR, "/workspace/tools"):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# ---- Firecrawl 首选导入（2026-11-24 接入）----
+try:
+    from firecrawl import scrape as fc_scrape
+    _HAS_FIRECRAWL = True
+except Exception:
+    _HAS_FIRECRAWL = False
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0 Safari/537.36")
 
 # Playwright / 云浏览器集成：仅对必须 JS 渲染的站点按需启用
-# 优先级：Browserbase（需 REST 建 session）> Browserless（直接 CDP）> urllib
+# 优先级：Firecrawl > Browserbase（需 REST 建 session）> Browserless（直接 CDP）> urllib
 def _cred(name, env_key, default=""):
     """凭证读取：环境变量优先，其次 ~/.config/<name>/key（600）。"""
     v = os.environ.get(env_key)
@@ -103,9 +116,26 @@ def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
     """抓正文。2026-11-17 修：原版无代理参数、无重试、timeout 固定 10s。
     实测直连 technologyreview 抛 URLError（网络层失败），走 7890 能拿到内容；
     403/404 类站点（theinformation、openai）换代理照样 403，不重试。
-    2026-11-18：对 PLAYWRIGHT_HOSTS 域名若配了 CDP 端点，改用 Playwright 抓取。"""
+    2026-11-18：对 PLAYWRIGHT_HOSTS 域名若配了 CDP 端点，改用 Playwright 抓取。
+    2026-11-24：Firecrawl 首选（全站通用），失败/太薄/无点数/限流 → Playwright 白名单 → urllib 兜底。"""
     t0 = time.time()
     
+    # ---- 1️⃣ Firecrawl 首选（2026-11-24 接入）----
+    if _HAS_FIRECRAWL:
+        try:
+            r = fc_scrape(url, chars)
+            if r.get("ok"):
+                r["engine"] = "firecrawl:scrape"
+                return r
+            # 太薄 / 失败 / 无点数 / 限流 → 记录错误码，继续走兜底链
+            err_code = r.get("error_code")
+            if err_code in ("INSUFFICIENT_CREDITS", "RATE_LIMITED", "API_ERROR", "NETWORK"):
+                # 可选：统计用，上层 main() 里汇总
+                pass
+        except Exception:
+            pass
+    
+    # ---- 2️⃣ Playwright (Browserbase/Browserless) 兜底 —— 仅白名单 ----
     # 云浏览器分流：Browserbase 优先（REST 建 session），其次 Browserless（直接 CDP）
     host = urllib.parse.urlparse(url).netloc.lower()
     pw_endpoint = None
@@ -168,7 +198,8 @@ def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
             cjk = len(re.findall(r"[\u4e00-\u9fa5]", txt))
             lang = "zh" if cjk > len(txt) * 0.15 else "en"
             return {"ok": len(txt) >= 600, "chars": len(txt), "text": txt[:chars],
-                    "lang": lang, "sec": round(time.time() - t0, 1), "tries": tries}
+                    "lang": lang, "sec": round(time.time() - t0, 1), "tries": tries,
+                    "engine": "urllib"}
         except urllib.error.HTTPError as e:
             err = "HTTP%d" % e.code
             if e.code in NO_RETRY or tries > retries:
@@ -180,7 +211,7 @@ def fetch_text(url, chars, proxy=None, retries=2, timeout=12):
                 break
             time.sleep(0.6 * tries)
     return {"ok": False, "chars": 0, "text": "", "err": err, "sec": round(time.time() - t0, 1),
-            "tries": tries}
+            "tries": tries, "engine": "urllib"}
 
 
 async def fetch_text_playwright(url, chars, cdp_endpoint, timeout=60):
@@ -319,6 +350,12 @@ def main():
     ok = [r for _, r in res if r["ok"]]
     thin = [r for _, r in res if not r["ok"] and r["chars"] > 0]
     bad = [r for _, r in res if r["chars"] == 0]
+    # Firecrawl 专项统计（2026-11-24）
+    fc_no_credits = sum(1 for _, r in res if r.get("error_code") == "INSUFFICIENT_CREDITS")
+    fc_rate_limited = sum(1 for _, r in res if r.get("error_code") == "RATE_LIMITED")
+    fc_api_err = sum(1 for _, r in res if r.get("error_code") == "API_ERROR")
+    fc_net_err = sum(1 for _, r in res if r.get("error_code") == "NETWORK")
+    fc_ok = sum(1 for _, r in res if r.get("engine") == "firecrawl:scrape" and r.get("ok"))
     mid = sorted(r["chars"] for r in ok)[len(ok) // 2] if ok else 0
     out = arg("--out") or (os.path.join(d, "prep", "enrich.json") if mode == "prep"
                            else os.path.join(d, "enrich.json"))
@@ -326,6 +363,9 @@ def main():
     json.dump(store, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
     print("可用 %d · 太薄 %d · 失败 %d · 总耗时 %.1fs · 正文中位 %d 字"
           % (len(ok), len(thin), len(bad), time.time() - t0, mid))
+    if fc_ok or fc_no_credits or fc_rate_limited or fc_api_err or fc_net_err:
+        print("Firecrawl: 成功 %d · 无点数 %d · 限流 %d · API错误 %d · 网络错误 %d"
+              % (fc_ok, fc_no_credits, fc_rate_limited, fc_api_err, fc_net_err))
     print("→ " + out)
     return 0
 
