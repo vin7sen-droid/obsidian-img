@@ -7,6 +7,10 @@
 import fs from "node:fs";
 
 const NAMES = [
+  ["Jakub Pachocki", "雅库布·帕霍茨基"],   // 2026-11-23 add_term
+  ["Howard Lutnick", "霍华德·卢特尼克"],   // 2026-11-23 add_term
+  ["Wan", "万相"],   // 2026-11-23 add_term
+  ["Moonshot", "月之暗面"],   // 2026-11-22：Kimi K3 标题「Moonshot Launches...」被译「登月式豪赌推出」
   ["Chamath Palihapitiya", "查马斯·帕里哈皮蒂亚"],
   ["Volodymyr Zelenskyy", "弗拉基米尔·泽连斯基"],
   ["Benjamin Netanyahu", "本雅明·内塔尼亚胡"],
