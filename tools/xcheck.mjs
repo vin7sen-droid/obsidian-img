@@ -664,7 +664,7 @@ export async function refillFallback(srcLines, zhLines, opts = {}) {
 // 人工审清单落盘：<dir>/<stamp>_人工审.md
 export function writeReviewList(dir, stamp, flagged, meta = {}) {
   if (!flagged.length) return null;
-  const outDir = dir || "/root/workspace/digests";
+  const outDir = dir || process.env.DSH_DIGESTS_DIR || path.join(os.homedir(), "digests");
   try { fs.mkdirSync(outDir, { recursive: true }); } catch {}
   const p = path.join(outDir, stamp + "_人工审.md");
   const lines = [
