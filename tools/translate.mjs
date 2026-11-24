@@ -45,6 +45,12 @@ const TEXT_MAX_CHARS = 1200;    // 单条文本上限，超出截断（标题不
 // Gemini 4 Hydrogen→「双子座4号氢气」。翻前把专名换成 zqx<N>zqx 占位符
 // （实测腾讯会原样保留该 token），翻完再还原，专名就不会被译坏。
 const PROTECT_WORDS = [
+  "Inshorts",   // 2026-11-23 add_term
+  "CoreWeave",   // 2026-11-23 add_term
+  "Kling",   // 2026-11-23 add_term
+  "Devin",   // 2026-11-23 add_term
+  "Manus",   // 2026-11-23 add_term
+  "Nebius",   // 2026-11-23 add_term
   // 播客 / 节目 / 栏目名（2026-11-21：No Priors 被译「没有前科」）
   "No Priors", "Latent Space", "Hard Fork", "All-In",
   // 公司 / 机构
@@ -67,6 +73,7 @@ const PROTECT_WORDS = [
   "GPT", "ChatGPT", "DALL-E", "Sora", "Claude", "Gemini", "Gemma", "Llama", "Qwen", "Kimi", "GLM",
   "Ernie", "Doubao", "Grok", "Copilot", "Phi", "Nemotron", "Granite", "Whisper",
   "Codex", "Veo", "Imagen", "NotebookLM", "Jules", "Cursor", "Windsurf", "Replit", "Vercel", "Ollama",
+  "Astra",   // 2026-11-22：GPT-6 Astra/Astra Pro 被音译「阿斯特拉」（11-18/21/22 期共 6 处）
   "vLLM", "LangChain", "LlamaIndex", "PyTorch", "TensorFlow", "JAX", "CUDA", "MCP", "Model Context Protocol",
   "Stable Diffusion", "ElevenLabs", "Suno", "Synthesia", "Scale AI",
   // 芯片 / 硬件
@@ -128,6 +135,9 @@ function unitZh(s) {
 // 「伪装的祝福」应为因祸得福、"picks and shovels"→「挑选和铲」应为卖铲人/基础设施供应商、
 // "no jerks culture"→「没有混蛋的文化」），整短语占位、还原定译中文，与量级词同机制。
 const IDIOM_ZH = [
+  // ── 2026-11-22 补：Moonshot 成语语境（SoftBank「$1T Moonshot Buyout」=登月式收购；
+  //    公司名语境由 name-guard NAMES 表映射「月之暗面」，IDIOM 先于 NAME 执行，长短语优先）──
+  [/\bMoonshot\s+[Bb]uyout\b/gi, "登月式收购"],
   // ── 2026-11-21 语义初筛/xcheck 真错补表（11-21 期实测，都是重复出现的机翻硬伤）──
   [/\bwhite[- ]?knuckle(d|s|ing)?\b/gi, "惊心动魄"],          // "白关节" Nvidia时期 → 惊心动魄的英伟达时期
   [/\bIPO\s+bust\b/gi, "IPO 风波"],                            // IPO bust → 破产 ✗
@@ -185,9 +195,14 @@ const IDIOM_ZH = [
   [/(?:doubl)(?:e|es|ed|ing)\s+down(?:\s+on)?/i, "加码"],
   [/game\s+changer/i, "游戏规则改变者"],
   [/silver\s+lining/i, "一线希望"],
-  // 「moonshot」= 登月式豪赌（大手笔押注）；但公司名 Moonshot AI 必须保留英文
+  // 「moonshot」= 登月式豪赌（大手笔押注）；但公司名语境必须留给 NAME 表（Moonshot→月之暗面）
   // （2026-11-20 实测：无差别规则把「Moonshot AI Cancels $150M…」译成「登月式豪赌人工智能取消…」）
-  [/(?<![\w-])moonshot(?!\s*(?:AI|ai\b|\s*人工智能))/i, "登月式豪赌"],
+  // 2026-11-22 修：原排除仅 AI/人工智能，漏掉「Moonshot Launches Kimi K3」「Moonshot's」等公司名语境，
+  // 导致 Kimi K3 标题反复译成「登月式豪赌推出」。改为排除：所有格、大写开头词（后接动词/产品名）、AI/Kimi。
+  // 2026-11-22 定版：改为正向白名单——仅「moonshot + 押注类名词」译「登月式豪赌」；
+  // 其余语境（Moonshot Launches / Moonshot's / Moonshot AI / Kimi…）一律留给 NAME 表→「月之暗面」。
+  // （旧负向前瞻只排除 AI/人工智能，Kimi K3 标题因此反复变「登月式豪赌推出」；加 [A-Z]/所有格排除又会误伤普通词。）
+  [/(?<![\w-])moonshot\s+(?:buyout|bet|project|deal|bid|plan|gamble|effort|attempt|mission|acquisition|investment)\b/i, "登月式豪赌"],
   [/sea\s+change/i, "根本性转变"],
   [/paradigm\s+shift/i, "范式转变"],
   [/elephant\s+in\s+the\s+room/i, "众人避谈的问题"],
@@ -546,4 +561,4 @@ export async function translateRes(res, opts = {}) {
     elapsedMs: Date.now() - t0,
   };
   return res;
-}
+}export { protect as __protect };
