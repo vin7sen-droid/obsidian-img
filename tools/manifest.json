@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-21T14:36:51+08:00",
+ "updated": "2026-11-24T14:05:38+08:00",
  "files": {
   "clip.py": {
    "sha256": "c80d0bbaa1a0ed4ba5dee2426f7e8765ac14419a9e29eaf59ebf557fa1c3b406",
@@ -34,8 +34,8 @@
    "bytes": 4412
   },
   "gh_sync.py": {
-   "sha256": "f11090a1f3ef12d5b87650370d9489f26d4580ef655646c3a9332cd364aa26c1",
-   "bytes": 16075
+   "sha256": "a0faadaf9df46e74d75769be16804119519644ae11ed258c39823f4b6e9da121",
+   "bytes": 16994
   },
   "update_check_template.md": {
    "sha256": "98b63cc9e1e941e9a7e65e8fdf126d65b7248af04ccb9587632d994116310620",
@@ -54,8 +54,8 @@
    "bytes": 5915
   },
   "ins_export/ins_dl.py": {
-   "sha256": "3828dbbcbf33f8a9b8fb8d66484ba891be2f7571d43345fbafcd730f933cd7ab",
-   "bytes": 14766
+   "sha256": "c6303c90fdd28641143f6bd8f71d4405b4049ae69fe7c894499f813ad8751d20",
+   "bytes": 15209
   },
   "ins_export/selfupdate.py": {
    "sha256": "1e7956ef45fb21f02ecb24fe8f0eda20217d088ef57b75b11ba60b77359f48bd",
@@ -74,12 +74,12 @@
    "bytes": 6963
   },
   "zh.mjs": {
-   "sha256": "f3a5296e8c3b82bb9a00c8cdc26ebad04e251c0c759fb53ef8b89751ab1cc27f",
-   "bytes": 17274
+   "sha256": "77c4ed495a3dc65095346bf6e9a1d80352787207a5e16e74f641e7a8ca81d0b8",
+   "bytes": 18789
   },
   "numcheck.py": {
-   "sha256": "57b0b92d9ca5b4918a6d4843f9cc26221362802a25f823654709cae45c6ffa72",
-   "bytes": 1057
+   "sha256": "aa582c97903494a78c0e1506c8a46a4532306e2778a144d73fd31ec38507cef7",
+   "bytes": 1079
   },
   "summary_check.py": {
    "sha256": "642411e7c2f6b0ae7c695e3b1130ba34b680463ae51b3c4db86e8a0e6af05eed",
@@ -90,12 +90,12 @@
    "bytes": 4927
   },
   "xcheck.mjs": {
-   "sha256": "855594c829e0cd9904989b6ae0a3e57f0dce5bff4acb5824422a1f5a8ac2b2ac",
-   "bytes": 40680
+   "sha256": "58accc081f2eaa6e419e8035fc6ad6ac4754c0247726455be2ae5e558a4fb2d7",
+   "bytes": 40720
   },
   "semantic_check.py": {
-   "sha256": "4220273e23d9d9191d9be9aa06a69e5b36078a7e80078eb666b4dbf6a66db785",
-   "bytes": 16991
+   "sha256": "28c78fbfe64e0a7cbe128d723889ec84a6962940f1541e6e953c5039e08baa60",
+   "bytes": 25348
   },
   "draft_summary.py": {
    "sha256": "aa70fcb4b42f08db138e488ee2b35b133e5ffe893fc6f08cad0f482b2ebd777e",
@@ -134,12 +134,12 @@
    "bytes": 838
   },
   "translate.mjs": {
-   "sha256": "37799d8363f241892bc9db0bce4479e3a4e813e5602c44082d87f4c874d5507b",
-   "bytes": 32845
+   "sha256": "eedc947d47b5a690faca3af99b694e2170cdc7a747be96cd4f959ffbd850791c",
+   "bytes": 34262
   },
   "name-guard.mjs": {
-   "sha256": "493b1978230a88b389791bd380c9e54e4b045ddee14cd0d597166280c406aa46",
-   "bytes": 12379
+   "sha256": "e825bc87e2d980908d04618886d22a9dd10540b63dcf5da0e4583f7f878201b7",
+   "bytes": 12697
   },
   "names-extra.json": {
    "sha256": "7ab892721f6d82441fce4a426a46b4039f3168245dc998d1f19571ad7c4cb9dc",
@@ -158,8 +158,24 @@
    "bytes": 102683
   },
   "enrich.py": {
-   "sha256": "a96699500978cbe45237bdf7e5bed77a7d8de931f8482d84af969a5a1738150d",
-   "bytes": 15590
+   "sha256": "10b34f57f08469dd861bdf12dcd7fb445c03456ba06cda89cf76485be44548f3",
+   "bytes": 17650
+  },
+  "firecrawl.py": {
+   "sha256": "368a2a28ab64dbab5a12298d7f3d8805977f5722ab292a55ec5b6b48b511d133",
+   "bytes": 9434
+  },
+  "firecrawl_cache.py": {
+   "sha256": "d12708291a3180ec59db8ad1dd9dce17099bab51030bd710d7f6c4c1c147335b",
+   "bytes": 2578
+  },
+  "radar_firecrawl.py": {
+   "sha256": "280f72cdd5c64f09fc1b42efdfaefb1370965e98968d212b2d811ffd6e264ff5",
+   "bytes": 13287
+  },
+  "gnews_url.py": {
+   "sha256": "7d095bba2f29ab0c69d9a0f9477111c936190c77c8cad0c259659aa9d0de2bfb",
+   "bytes": 8973
   },
   "mdhtml.py": {
    "sha256": "d3ba1bde06af5eaf52eb147a79b8d3686c086d5f7895552f9cd04645d7b74fb6",
